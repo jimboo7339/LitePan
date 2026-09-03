@@ -142,6 +142,69 @@ func appliedVersions(ctx context.Context, db *DB) (map[int]bool, error) {
 	return applied, rows.Err()
 }
 
+// EnsureDramaTables 兜底：无论迁移是否按预期执行，检查并创建 drama_tasks / drama_task_runs / magic_regex_rules 表。
+// 迁移冲突（如 0022 重复号段导致漏执行）或旧库升级时不会再因为 no such table 直接 500（来自Trae）。
+func (db *DB) EnsureDramaTables(ctx context.Context) error {
+	stmts := []string{
+		// 追剧转存任务表（来自Trae）
+		`CREATE TABLE IF NOT EXISTS drama_tasks (
+			id              INTEGER PRIMARY KEY AUTOINCREMENT,
+			taskname        TEXT NOT NULL DEFAULT '',
+			account_id      INTEGER NOT NULL DEFAULT 0,
+			shareurl        TEXT NOT NULL DEFAULT '',
+			savepath        TEXT NOT NULL DEFAULT '',
+			pattern         TEXT NOT NULL DEFAULT '',
+			replace         TEXT NOT NULL DEFAULT '',
+			ignore_extension INTEGER NOT NULL DEFAULT 0,
+			runweek         TEXT NOT NULL DEFAULT '',
+			enddate         TEXT NOT NULL DEFAULT '',
+			update_subdir   TEXT NOT NULL DEFAULT '',
+			update_subdir_resave_mode TEXT NOT NULL DEFAULT 'none',
+			startfid        TEXT NOT NULL DEFAULT '',
+			sort_index      INTEGER NOT NULL DEFAULT 1,
+			status          TEXT NOT NULL DEFAULT 'running',
+			last_run_at     TEXT NOT NULL DEFAULT '',
+			last_run_status TEXT NOT NULL DEFAULT '',
+			last_run_message TEXT NOT NULL DEFAULT '',
+			last_tree_summary TEXT NOT NULL DEFAULT '',
+			created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_drama_tasks_status ON drama_tasks(status)`,
+		`CREATE INDEX IF NOT EXISTS idx_drama_tasks_account ON drama_tasks(account_id)`,
+		// 追剧任务执行历史（来自Trae）
+		`CREATE TABLE IF NOT EXISTS drama_task_runs (
+			id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			task_id     INTEGER NOT NULL,
+			status      TEXT NOT NULL DEFAULT 'running',
+			message     TEXT NOT NULL DEFAULT '',
+			tree_summary TEXT NOT NULL DEFAULT '',
+			transfer_count INTEGER NOT NULL DEFAULT 0,
+			started_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			finished_at TEXT NOT NULL DEFAULT '',
+			FOREIGN KEY(task_id) REFERENCES drama_tasks(id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_drama_task_runs_task_id ON drama_task_runs(task_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_drama_task_runs_started_at ON drama_task_runs(started_at)`,
+		// 命名正则规则表（来自Trae）
+		`CREATE TABLE IF NOT EXISTS magic_regex_rules (
+			key         TEXT PRIMARY KEY,
+			label       TEXT NOT NULL DEFAULT '',
+			pattern     TEXT NOT NULL DEFAULT '',
+			replace     TEXT NOT NULL DEFAULT '',
+			enabled     INTEGER NOT NULL DEFAULT 1,
+			created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+	}
+	for _, s := range stmts {
+		if _, err := db.write.ExecContext(ctx, s); err != nil {
+			return fmt.Errorf("ensure drama tables: %w", err)
+		}
+	}
+	return nil
+}
+
 func tableExists(ctx context.Context, db *DB, name string) (bool, error) {
 	var count int
 	if err := db.write.QueryRowContext(ctx,
