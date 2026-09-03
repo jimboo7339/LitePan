@@ -51,6 +51,11 @@ func openStore(ctx context.Context, cfg config.Config, logs *logx.Manager) (*sto
 		_ = db.Close()
 		return nil, fmt.Errorf("repair upload_tasks schema: %w", err)
 	}
+	// 追剧转存/命名正则表兜底：迁移版本号冲突或旧库升级时避免 no such table 直接 500（来自Trae）
+	if err := db.EnsureDramaTables(ctx); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("repair drama tables schema: %w", err)
+	}
 
 	st := store.New(db)
 	settingsSvc, err := settings.New(ctx, st.Configs)
