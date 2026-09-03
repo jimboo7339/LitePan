@@ -6,14 +6,46 @@ package store
 import (
 	"context"
 	"database/sql"
+	"fmt"
+	"sync"
 
 	"litepan/internal/domain"
 )
 
-type magicRegexRuleRepo struct{ db *DB }
+type magicRegexRuleRepo struct {
+	db         *DB
+	ensureOnce sync.Once // 首次访问前自动建表 once（来自Trae）
+}
+
+// ensureTables 首次访问 magic_regex_rules 前自动建表，最后一道防线（来自Trae）。
+func (r *magicRegexRuleRepo) ensureTables() {
+	r.ensureOnce.Do(func() {
+		if r == nil || r.db == nil {
+			return
+		}
+		ctx := context.Background()
+		stmts := []string{
+			`CREATE TABLE IF NOT EXISTS magic_regex_rules (
+				key         TEXT PRIMARY KEY,
+				label       TEXT NOT NULL DEFAULT '',
+				pattern     TEXT NOT NULL DEFAULT '',
+				replace     TEXT NOT NULL DEFAULT '',
+				enabled     INTEGER NOT NULL DEFAULT 1,
+				created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				updated_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+			)`,
+		}
+		for _, s := range stmts {
+			if _, err := r.db.write.ExecContext(ctx, s); err != nil {
+				_ = fmt.Errorf("magicRegexRuleRepo ensureTables stmt failed: %w", err)
+			}
+		}
+	})
+}
 
 // Upsert 创建或覆盖规则（来自Trae）
 func (r *magicRegexRuleRepo) Upsert(ctx context.Context, rule *domain.MagicRegexRule) error {
+	r.ensureTables() // 最后一道防线：访问前确保表存在（来自Trae）
 	if rule == nil || rule.Key == "" {
 		return domain.Errorf(domain.CodeValidation, "规则 key 不能为空")
 	}
@@ -33,6 +65,7 @@ ON CONFLICT(key) DO UPDATE SET
 
 // Delete 删除规则；不存在时返回 CodeNotFound（来自Trae）
 func (r *magicRegexRuleRepo) Delete(ctx context.Context, key string) error {
+	r.ensureTables() // 最后一道防线：访问前确保表存在（来自Trae）
 	if key == "" {
 		return domain.Errorf(domain.CodeValidation, "规则 key 不能为空")
 	}
@@ -48,6 +81,7 @@ func (r *magicRegexRuleRepo) Delete(ctx context.Context, key string) error {
 
 // Get 按 key 取规则；不存在时返回 CodeNotFound（来自Trae）
 func (r *magicRegexRuleRepo) Get(ctx context.Context, key string) (*domain.MagicRegexRule, error) {
+	r.ensureTables() // 最后一道防线：访问前确保表存在（来自Trae）
 	row := r.db.read.QueryRowContext(ctx, `
 SELECT key, label, pattern, replace, enabled FROM magic_regex_rules WHERE key=?`, key)
 	rule, err := scanMagicRegexRule(row)
@@ -59,6 +93,7 @@ SELECT key, label, pattern, replace, enabled FROM magic_regex_rules WHERE key=?`
 
 // List 列出全部规则（按 key 升序）（来自Trae）
 func (r *magicRegexRuleRepo) List(ctx context.Context) ([]*domain.MagicRegexRule, error) {
+	r.ensureTables() // 最后一道防线：访问前确保表存在（来自Trae）
 	rows, err := r.db.read.QueryContext(ctx, `
 SELECT key, label, pattern, replace, enabled FROM magic_regex_rules ORDER BY key ASC`)
 	if err != nil {
