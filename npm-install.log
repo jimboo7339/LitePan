@@ -1,0 +1,13 @@
+﻿node.exe : npm error code ENOTSOCK
+At line:1 char:1
++ & "C:\nvm4w\nodejs/node.exe" "C:\nvm4w\nodejs/node_modules/npm/bin/np ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (npm error code ENOTSOCK:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+npm error syscall connect
+npm error errno ENOTSOCK
+npm error request to https://registry.npmjs.org/@zip.js/zip.js/-/zip.js-2.8.60.tgz failed, reason: connect ENOTSOCK 192
+.168.1.181:8080 - Local (undefined:undefined)
+npm error A complete log of this run can be found in: C:\Users\111476\AppData\Local\npm-cache\_logs\2026-09-01T03_51_11
+_212Z-debug-0.log

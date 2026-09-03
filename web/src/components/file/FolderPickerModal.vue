@@ -317,7 +317,10 @@ function onResolve(folder: {
           @resolve="onResolve"
           @cancel="emit('close')"
         />
-        <div v-else class="folder-picker__placeholder">请选择左侧账号</div>
+        <div v-else class="folder-picker__placeholder">
+          <span class="folder-picker__placeholder-text">请选择左侧账号</span>
+          <button type="button" class="folder-picker__placeholder-close" @click="emit('close')">关闭</button>
+        </div>
       </div>
     </div>
   </AppModal>
@@ -487,6 +490,26 @@ function onResolve(folder: {
   margin: auto;
   color: var(--text-muted);
   font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+.folder-picker__placeholder-close {
+  padding: 7px 22px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-regular);
+  font-size: 13px;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.folder-picker__placeholder-close:hover {
+  border-color: var(--brand);
+  color: var(--brand);
 }
 
 @media (max-width: 640px) {

@@ -1,23 +1,31 @@
 package notification
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"strings"
+	"time"
 
 	"litepan/internal/domain"
 	"litepan/internal/eventbus"
+	"litepan/internal/settings"
 )
 
 type Options struct {
 	Repo     domain.NotificationRepository
 	Accounts domain.AccountRepository
+	Settings *settings.Service // 全局设置（通知渠道 webhook），来自Trae
 	Log      *slog.Logger
 }
 
 type Service struct {
 	repo     domain.NotificationRepository
 	accounts domain.AccountRepository
+	settings *settings.Service
 	log      *slog.Logger
 }
 
@@ -26,7 +34,7 @@ func NewService(opts Options) *Service {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Service{repo: opts.Repo, accounts: opts.Accounts, log: log}
+	return &Service{repo: opts.Repo, accounts: opts.Accounts, settings: opts.Settings, log: log}
 }
 
 func (s *Service) Register(bus *eventbus.Bus) {
@@ -139,6 +147,124 @@ func (s *Service) persist(ctx context.Context, level, category, title, message s
 	})
 	if err != nil {
 		s.log.Warn("persist notification failed", "title", title, "err", err)
+	}
+	// 推送到已配置的外部通知渠道（企微/钉钉/飞书），来自Trae
+	// 仅对任务执行类通知转发，避免认证类通知刷屏；使用独立 context 避免任务 cancel 影响推送
+	s.sendWebhook(level, category, title, message)
+}
+
+// sendWebhook 根据全局设置调用已配置的机器人 webhook，来自Trae
+// 任意渠道配置非空即推送；推送异步执行，不阻塞通知持久化主流程
+func (s *Service) sendWebhook(level, category, title, message string) {
+	if s.settings == nil {
+		return
+	}
+	// 只转发转存(drama)/STRM(strm*)/缓存(cache)类任务通知，避免认证等系统通知刷屏，来自Trae
+	if !isTaskCategory(category) {
+		return
+	}
+	wecomHook := s.settings.String(settings.KeyNotifyWecomWebhook)
+	dingtalkHook := s.settings.String(settings.KeyNotifyDingtalkWebhook)
+	feishuHook := s.settings.String(settings.KeyNotifyFeishuWebhook)
+	if wecomHook == "" && dingtalkHook == "" && feishuHook == "" {
+		return
+	}
+	go func() {
+		if wecomHook != "" {
+			s.sendWecom(wecomHook, level, title, message)
+		}
+		if dingtalkHook != "" {
+			s.sendDingtalk(dingtalkHook, level, title, message)
+		}
+		if feishuHook != "" {
+			s.sendFeishu(feishuHook, level, title, message)
+		}
+	}()
+}
+
+// isTaskCategory 判断是否为任务执行类通知（需要转发到 webhook），来自Trae
+func isTaskCategory(category string) bool {
+	switch category {
+	case "drama", "cache", "strm", "strm_scan_warn", "strm_scrape":
+		return true
+	}
+	return strings.HasPrefix(category, "strm")
+}
+
+// levelEmoji 把通知级别映射为表情前缀，方便群机器人阅读，来自Trae
+func levelEmoji(level string) string {
+	switch level {
+	case "error":
+		return "❌"
+	case "warning", "warn":
+		return "⚠️"
+	case "success":
+		return "✅"
+	default:
+		return "ℹ️"
+	}
+}
+
+// sendWecom 推送到企业微信群机器人，来自Trae
+// 文档：https://developer.work.weixin.qq.com/document/path/91770
+func (s *Service) sendWecom(webhook, level, title, message string) {
+	payload := map[string]any{
+		"msgtype": "markdown",
+		"markdown": map[string]string{
+			"content": fmt.Sprintf("%s **%s**\n%s", levelEmoji(level), title, message),
+		},
+	}
+	s.postWebhook("wecom", webhook, payload)
+}
+
+// sendDingtalk 推送到钉钉群机器人，来自Trae
+// 文档：https://open.dingtalk.com/document/robots/custom-robot-access
+func (s *Service) sendDingtalk(webhook, level, title, message string) {
+	payload := map[string]any{
+		"msgtype": "markdown",
+		"markdown": map[string]string{
+			"title": title,
+			"text":  fmt.Sprintf("%s **%s**\n\n%s", levelEmoji(level), title, message),
+		},
+	}
+	s.postWebhook("dingtalk", webhook, payload)
+}
+
+// sendFeishu 推送到飞书群机器人，来自Trae
+// 文档：https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/bot-v2/add-custom-bot
+func (s *Service) sendFeishu(webhook, level, title, message string) {
+	payload := map[string]any{
+		"msg_type": "text",
+		"content": map[string]string{
+			"text": fmt.Sprintf("%s %s\n%s", levelEmoji(level), title, message),
+		},
+	}
+	s.postWebhook("feishu", webhook, payload)
+}
+
+// postWebhook 统一的 HTTP POST 推送，带 10 秒超时，来自Trae
+func (s *Service) postWebhook(channel, webhook string, payload any) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		s.log.Warn("notify webhook marshal failed", "channel", channel, "err", err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhook, bytes.NewReader(body))
+	if err != nil {
+		s.log.Warn("notify webhook request build failed", "channel", channel, "err", err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		s.log.Warn("notify webhook send failed", "channel", channel, "err", err)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		s.log.Warn("notify webhook non-2xx", "channel", channel, "status", resp.StatusCode)
 	}
 }
 

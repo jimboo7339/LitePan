@@ -24,6 +24,7 @@ const adminPageLoaders = {
   tools: () => import("@/components/admin/AuxToolsManagement.vue"),
   "cross-transfer": () => import("@/components/admin/CrossDriveTransfer.vue"),
   share: () => import("@/components/admin/FileShareManagement.vue"),
+  drama: () => import("@/components/admin/DramaTransferPanel.vue"),
 };
 const DashboardManagement = defineAsyncComponent(adminPageLoaders.dashboard);
 const AccountManagement = defineAsyncComponent(adminPageLoaders.accounts);
@@ -32,6 +33,7 @@ const TaskManagement = defineAsyncComponent(adminPageLoaders.tasks);
 const AuxToolsManagement = defineAsyncComponent(adminPageLoaders.tools);
 const CrossDriveTransfer = defineAsyncComponent(adminPageLoaders["cross-transfer"]);
 const FileShareManagement = defineAsyncComponent(adminPageLoaders.share);
+const DramaTransferPanel = defineAsyncComponent(adminPageLoaders.drama);
 import { logout, fetchSystemConfig } from "@/api/auth";
 import { useAuthStore } from "@/stores/auth";
 import { provideAdminPageContext } from "@/composables/useAdminLoadingBar";
@@ -328,6 +330,7 @@ onBeforeUnmount(() => {
         @admin-ui-updated="loadAdminUiConfig"
       />
       <CrossDriveTransfer v-else-if="page === 'cross-transfer'" />
+      <DramaTransferPanel v-else-if="page === 'drama'" />
       <FileShareManagement v-else-if="page === 'share'" />
       <component :is="cachedPageComponent" v-else-if="cachedPageComponent" :key="page" />
     </KeepAlive>

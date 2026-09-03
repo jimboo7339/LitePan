@@ -12,6 +12,7 @@ import (
 	"litepan/internal/config"
 	"litepan/internal/crosstransfer"
 	"litepan/internal/domain"
+	"litepan/internal/dramatransfer"
 	"litepan/internal/embyproxy"
 	"litepan/internal/favorites"
 	"litepan/internal/file"
@@ -50,6 +51,7 @@ type servicesBundle struct {
 	fnosProxy        *fnosproxy.Service
 	favorites        *favorites.Service
 	quarktv          *quarktv.Service
+	drama            *dramatransfer.Service // 追剧转存服务（来自Trae）
 }
 
 func wireServices(cfg config.Config, logs *logx.Manager, st *storeBundle, core *coreBundle) *servicesBundle {
@@ -188,6 +190,17 @@ func wireServices(cfg config.Config, logs *logx.Manager, st *storeBundle, core *
 	automationSvc.SetStartupGate(startupGate)
 	automationSvc.Register(core.bus)
 	strmSvc.SetAutomationManagedChecker(automationSvc.IsStrmTaskManaged)
+	// 追剧转存服务：复用 driverexec 获取驱动、eventbus 发布通知、DramaTasks 仓储持久化（来自Trae）
+	dramaSvc := dramatransfer.New(dramatransfer.Options{
+		Exec:     core.exec,
+		Repo:     st.store.DramaTasks,
+		Accounts: st.store.Accounts,
+		Rules:    st.store.MagicRegexRules, // 命名正则规则（来自Trae）
+		Bus:      core.bus,
+		Log:      logs.For(logx.ModuleSystem),
+		Settings: st.settings, // 全局设置（转存调度开关/Cron），来自Trae
+	})
+	dramaSvc.SetStartupGate(startupGate)
 	return &servicesBundle{
 		files:            fileSvc,
 		uploads:          uploadSvc,
@@ -209,5 +222,6 @@ func wireServices(cfg config.Config, logs *logx.Manager, st *storeBundle, core *
 		fnosProxy:        fnosProxySvc,
 		favorites:        favoritesSvc,
 		quarktv:          quarktvSvc,
+		drama:            dramaSvc,
 	}
 }

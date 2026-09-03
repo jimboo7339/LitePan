@@ -122,6 +122,59 @@ type FolderCreator interface {
 	CreateFolder(ctx context.Context, parentID, name string) (*domain.FileItem, error)
 }
 
+// ShareItem 是分享链接内的一个文件/目录条目（来自Trae）。
+// ShareFIDToken 仅部分网盘（夸克）需要，用于转存时一并上送；不需要的网盘填空。
+type ShareItem struct {
+	FID           string
+	FileName      string
+	Size          int64
+	UpdatedAt     int64 // Unix 秒，可能为 0
+	IsDir         bool
+	ShareFIDToken string
+}
+
+// SaveShareReq 是 SaveShareFiles 的入参（来自Trae）。
+// FIDs / FIDTokens / FileNames 三个切片长度必须一致。
+type SaveShareReq struct {
+	FIDs      []string
+	FIDTokens []string // 与 FIDs 一一对应，不需要 token 的网盘传空串
+	ToPdirFID string   // 目标父目录 ID
+	PwdID     string   // 分享 ID
+	Stoken    string   // 分享访问令牌
+	FileNames []string // 与 FIDs 一一对应的原始文件名（用于光鸭按名对齐 saved_fids）
+}
+
+// TransferStatus 是 QueryTransferTask 的返回（来自Trae）。
+type TransferStatus struct {
+	Done      bool
+	Failed    bool
+	Message   string
+	SavedFIDs []string // 完成时返回的转存后 fid 列表；部分网盘会在 save_file 阶段直接给出
+}
+
+// PathFID 是 ResolvePathToFID 的单项返回（来自Trae）。
+type PathFID struct {
+	Path string
+	FID  string
+}
+
+// ShareTransferer 可选：分享链接转存能力（追剧任务必需）（来自Trae）。
+// 不实现此接口的驱动无法参与追剧转存；其它能力（ListFiles/CreateFolder/RenameFile 等）仍走原有可选接口。
+type ShareTransferer interface {
+	// ExtractShareURL 解析分享链接，返回 pwdID / passcode / 起始 pdirFID。
+	ExtractShareURL(shareURL string) (pwdID, passcode, pdirFID string, err error)
+	// GetShareToken 获取分享访问令牌（夸克为 stoken；光鸭为内部 JSON 字符串）。
+	GetShareToken(ctx context.Context, pwdID, passcode string) (stoken string, err error)
+	// ListShareItems 拉取分享目录下的一级条目（不递归）。
+	ListShareItems(ctx context.Context, pwdID, stoken, pdirFID string) ([]ShareItem, error)
+	// SaveShareFiles 提交转存任务；不需要 task_id 的网盘可在内部完成轮询，taskID 返回空。
+	SaveShareFiles(ctx context.Context, req SaveShareReq) (taskID string, savedFIDs []string, err error)
+	// QueryTransferTask 查询转存任务状态；不需要任务查询的网盘认为已完成。
+	QueryTransferTask(ctx context.Context, taskID string) (TransferStatus, error)
+	// ResolvePathToFID 把若干绝对路径批量解析为 fid（用于 mkdir 之前探活）。
+	ResolvePathToFID(ctx context.Context, paths []string) ([]PathFID, error)
+}
+
 // OAuthConsumer 经统一 OAuth 代理刷新令牌的驱动实现。
 type OAuthConsumer interface {
 	SetOAuthServer(baseURL string)

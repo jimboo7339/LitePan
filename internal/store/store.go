@@ -21,6 +21,8 @@ type Store struct {
 	AutomationRules     domain.AutomationRuleRepository
 	AutomationRuns      domain.AutomationRunRepository
 	QuarkTVBindings     domain.QuarkTVBindingRepository
+	DramaTasks          domain.DramaTaskRepository
+	MagicRegexRules     domain.MagicRegexRuleRepository // 追剧命名正则规则（来自Trae）
 }
 
 // New 基于已打开的 DB 构造仓储集合。
@@ -43,5 +45,7 @@ func New(db *DB) *Store {
 		AutomationRules:     &automationRuleRepo{db: db},
 		AutomationRuns:      &automationRunRepo{db: db},
 		QuarkTVBindings:     &quarktvBindingRepo{db: db},
+		DramaTasks:          &dramaTaskRepo{db: db},
+		MagicRegexRules:     &magicRegexRuleRepo{db: db},
 	}
 }

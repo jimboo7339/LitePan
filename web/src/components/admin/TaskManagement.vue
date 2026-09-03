@@ -69,8 +69,10 @@ const CacheSettingsPanel = defineAsyncComponent(() => import("@/components/admin
 const AutomationPanel = defineAsyncComponent(() => import("@/components/admin/AutomationPanel.vue"));
 const MediaOrganizePanel = defineAsyncComponent(() => import("@/components/admin/MediaOrganizePanel.vue"));
 const MediaOrganizeSettings = defineAsyncComponent(() => import("@/components/admin/MediaOrganizeSettings.vue"));
+const DramaSettingsPanel = defineAsyncComponent(() => import("@/components/admin/DramaSettingsPanel.vue"));
 import CacheRuntimeStats from "@/components/admin/CacheRuntimeStats.vue";
 import AdminSettingsDrawer from "@/components/admin/AdminSettingsDrawer.vue";
+import DramaTransferPanel from "@/components/admin/DramaTransferPanel.vue";
 import { useAccountPathLabel } from "@/composables/useAccountPathLabel";
 import { useAdminPageLoading } from "@/composables/useAdminLoadingBar";
 import { useConditionalPolling } from "@/composables/useConditionalPolling";
@@ -89,6 +91,7 @@ import { useStartupCountdown } from "@/composables/useStartupCountdown";
 import { confirm, showConfirm } from "@/composables/useConfirm";
 import { toast } from "@/composables/useToast";
 import { useAccountsStore } from "@/stores/accounts";
+import { fetchDramaTasks, type DramaTask } from "@/api/drama";
 import { formatElapsedMs, formatTime } from "@/utils/format";
 import "@/styles/admin-shared.css";
 import "@/styles/admin-table.css";
@@ -97,15 +100,17 @@ const CACHE_TAB = "cache";
 const STRM_TAB = "strm";
 const ORGANIZE_TAB = "organize";
 const AUTOMATION_TAB = "automation";
+const DRAMA_TAB = "drama";
 const DEFAULT_STRM_SCAN_INTERVAL_MINUTES = 6 * 60;
 const tabs = [
   { key: STRM_TAB, label: "STRM 任务" },
   { key: CACHE_TAB, label: "缓存任务" },
   { key: ORGANIZE_TAB, label: "目录整理" },
   { key: AUTOMATION_TAB, label: "自动联动" },
+  { key: DRAMA_TAB, label: "转存任务" },
 ];
 
-type DrawerKind = "strm" | "organize" | "cache";
+type DrawerKind = "strm" | "organize" | "cache" | "drama";
 
 const settingsDrawerOpen = ref(false);
 const drawerKind = ref<DrawerKind>("strm");
@@ -114,6 +119,7 @@ const drawerKindsVisited = reactive<Record<DrawerKind, boolean>>({
   strm: false,
   organize: false,
   cache: false,
+  drama: false,
 });
 
 const retentionPanelRef = ref<InstanceType<typeof CacheRetentionPanelComponent> | null>(null);
@@ -122,6 +128,7 @@ const strmSettingsRef = ref<SettingsPanelExpose | null>(null);
 const organizePanelRef = ref<InstanceType<typeof MediaOrganizePanelComponent> | null>(null);
 const automationPanelRef = ref<{ openCreate: () => void } | null>(null);
 const organizeSettingsRef = ref<SettingsPanelExpose | null>(null);
+const dramaSettingsRef = ref<SettingsPanelExpose | null>(null);
 
 const accountsStore = useAccountsStore();
 const { accounts } = storeToRefs(accountsStore);
@@ -133,9 +140,21 @@ const strmTaskList = ref<HTMLElement | null>(null);
 const { removeWithDust } = useDustRemoval();
 const { remainingDisplay: startupRemainingDisplay, applyStartupRemaining } = useStartupCountdown();
 
+const dramaTasks = ref<DramaTask[]>([]);
+const dramaLoading = ref(false);
+const dramaListReady = ref(false);
+const dramaEnabledCount = computed(() => dramaTasks.value.filter((t) => t.status === "running").length);
+const dramaErrorCount = computed(() => dramaTasks.value.filter((t) => t.status === "error").length);
+const dramaTabStats = computed<AdminTaskTabStat[]>(() => [
+  { icon: "fa-list", value: dramaTasks.value.length, label: "任务总数", tone: "blue" },
+  { icon: "fa-play", value: dramaEnabledCount.value, label: "已启用", tone: "purple" },
+  { icon: "fa-pause", value: dramaErrorCount.value, label: "异常", tone: "amber" },
+]);
+
 const strmPanelDirty = ref(false);
 const cachePanelDirty = ref(false);
 const organizePanelDirty = ref(false);
+const dramaPanelDirty = ref(false);
 
 watchEffect(() => {
   strmPanelDirty.value = (strmSettingsRef.value as SettingsPanelExpose | null)?.isDirty?.() ?? false;
@@ -149,10 +168,16 @@ watchEffect(() => {
   organizePanelDirty.value = (organizeSettingsRef.value as SettingsPanelExpose | null)?.isDirty?.() ?? false;
 });
 
+watchEffect(() => {
+  dramaPanelDirty.value = (dramaSettingsRef.value as SettingsPanelExpose | null)?.isDirty?.() ?? false;
+});
+
 const drawerDirty = computed(() => {
   if (drawerKind.value === "strm") return strmPanelDirty.value;
   if (drawerKind.value === "cache") return cachePanelDirty.value;
-  return organizePanelDirty.value;
+  if (drawerKind.value === "organize") return organizePanelDirty.value;
+  if (drawerKind.value === "drama") return dramaPanelDirty.value;
+  return false;
 });
 
 const settingsPageDirty = computed(() => settingsDrawerOpen.value && drawerDirty.value);
@@ -160,14 +185,16 @@ const settingsPageDirty = computed(() => settingsDrawerOpen.value && drawerDirty
 function revertDrawerSettings() {
   if (drawerKind.value === "strm") strmSettingsRef.value?.revert?.();
   else if (drawerKind.value === "cache") cacheSettingsRef.value?.revert?.();
-  else organizeSettingsRef.value?.revert?.();
+  else if (drawerKind.value === "organize") organizeSettingsRef.value?.revert?.();
+  else if (drawerKind.value === "drama") dramaSettingsRef.value?.revert?.();
+  else strmSettingsRef.value?.revert?.();
 }
 
 const { confirmDiscardChanges } = useSettingsPageDirty(settingsPageDirty, revertDrawerSettings);
 
 const { activeTab, setActiveTab } = useSectionTabRoute(
   STRM_TAB,
-  [STRM_TAB, CACHE_TAB, ORGANIZE_TAB, AUTOMATION_TAB],
+  [STRM_TAB, CACHE_TAB, ORGANIZE_TAB, AUTOMATION_TAB, DRAMA_TAB],
   {
   beforeTabChange: async (_from, _to) => {
     if (!settingsDrawerOpen.value) return true;
@@ -289,12 +316,14 @@ const organizeTabStats = computed<AdminTaskTabStat[]>(() => [
 const drawerTitle = computed(() => {
   if (drawerKind.value === "organize") return "整理设置";
   if (drawerKind.value === "cache") return "缓存设置";
+  if (drawerKind.value === "drama") return "转存设置";
   return "STRM 设置";
 });
 const drawerSaving = computed(() => {
   if (drawerKind.value === "strm") return readPanelSaving(strmSettingsRef.value?.saving);
   if (drawerKind.value === "cache") return readPanelSaving(cacheSettingsRef.value?.saving);
-  return readPanelSaving(organizeSettingsRef.value?.saving);
+  if (drawerKind.value === "organize") return readPanelSaving(organizeSettingsRef.value?.saving);
+  return readPanelSaving(strmSettingsRef.value?.saving);
 });
 const drawerCanSave = drawerDirty;
 
@@ -371,11 +400,13 @@ function defaultScanInterval(): number {
 async function openSettingsDrawer(kind?: DrawerKind) {
   drawerKind.value =
     kind ??
-    (activeTab.value === ORGANIZE_TAB
-      ? "organize"
-      : activeTab.value === CACHE_TAB
-        ? "cache"
-        : "strm");
+    (activeTab.value === DRAMA_TAB
+      ? "drama"
+      : activeTab.value === ORGANIZE_TAB
+        ? "organize"
+        : activeTab.value === CACHE_TAB
+          ? "cache"
+          : "strm");
   drawerKindsVisited[drawerKind.value] = true;
   settingsDrawerOpen.value = true;
   if (drawerKind.value === "organize") {
@@ -388,6 +419,8 @@ async function openSettingsDrawer(kind?: DrawerKind) {
     if (cacheSettingsRef.value && !cacheSettingsRef.value.isDirty?.()) {
       await cacheSettingsRef.value.reload?.();
     }
+  } else if (drawerKind.value === "drama") {
+    await nextTick();
   } else {
     await nextTick();
     if (strmSettingsRef.value && !strmSettingsRef.value.isDirty?.()) {
@@ -404,7 +437,9 @@ async function closeSettingsDrawer() {
 async function handleDrawerSave() {
   if (drawerKind.value === "strm") await strmSettingsRef.value?.save?.();
   else if (drawerKind.value === "cache") await cacheSettingsRef.value?.save?.();
-  else await organizeSettingsRef.value?.save?.();
+  else if (drawerKind.value === "organize") await organizeSettingsRef.value?.save?.();
+  else if (drawerKind.value === "drama") await dramaSettingsRef.value?.save?.();
+  else await strmSettingsRef.value?.save?.();
 }
 
 const { timeWindowDisplay, timePickerMode, onTimeWheelConfirm } = useTimeWindowSchedule(form, {
@@ -566,6 +601,18 @@ async function loadTasks(quiet = false) {
   }
 }
 
+async function loadDramaTasks(quiet = false) {
+  if (!quiet) dramaLoading.value = true;
+  try {
+    dramaTasks.value = await fetchDramaTasks();
+  } catch (e) {
+    if (!quiet) toast.error(getApiErrorMessage(e, "加载转存任务失败"));
+  } finally {
+    if (!quiet) dramaLoading.value = false;
+    dramaListReady.value = true;
+  }
+}
+
 async function loadStartupRemaining() {
   try {
     const startup = await fetchStrmStartupRemaining();
@@ -576,7 +623,7 @@ async function loadStartupRemaining() {
 }
 
 async function refreshAll() {
-  await Promise.all([loadTasks(), accountsStore.loadAccounts()]);
+  await Promise.all([loadTasks(), loadDramaTasks(), accountsStore.loadAccounts()]);
 }
 
 function resetForm() {
@@ -1234,6 +1281,16 @@ watch(activeTab, (tab) => {
       <AutomationPanel ref="automationPanelRef" />
     </div>
 
+    <div v-if="tabsVisited[DRAMA_TAB]" v-show="activeTab === DRAMA_TAB" class="drama-task-panel">
+      <AdminTaskTabHeader
+        :stats="dramaTabStats"
+        settings-title="转存设置"
+        settings-hint="定时任务 · 命名规则 · 通知"
+        @open-settings="openSettingsDrawer('drama')"
+      />
+      <DramaTransferPanel :standalone="false" />
+    </div>
+
     <AdminSettingsDrawer
       :open="settingsDrawerOpen"
       :title="drawerTitle"
@@ -1246,6 +1303,7 @@ watch(activeTab, (tab) => {
       <StrmSettingsPanel v-show="drawerKind === 'strm'" ref="strmSettingsRef" />
       <CacheSettingsPanel v-if="drawerKindsVisited.cache" v-show="drawerKind === 'cache'" ref="cacheSettingsRef" />
       <MediaOrganizeSettings v-if="drawerKindsVisited.organize" v-show="drawerKind === 'organize'" ref="organizeSettingsRef" />
+      <DramaSettingsPanel v-if="drawerKindsVisited.drama" v-show="drawerKind === 'drama'" ref="dramaSettingsRef" />
     </AdminSettingsDrawer>
 
     <AppModal

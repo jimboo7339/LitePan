@@ -32,6 +32,7 @@ import (
 	"litepan/internal/coverextract"
 	"litepan/internal/crosstransfer"
 	"litepan/internal/domain"
+	"litepan/internal/dramatransfer"
 	"litepan/internal/embyproxy"
 	"litepan/internal/favorites"
 	"litepan/internal/file"
@@ -81,6 +82,7 @@ type Deps struct {
 	EmbyProxy         *embyproxy.Service
 	FnosProxy         *fnosproxy.Service
 	QuarkTV           *quarktv.Service
+	Drama             *dramatransfer.Service // 追剧转存服务（来自Trae）
 	ApiKeys           *apikey.Service
 	Auth              *auth.Service
 	AuthSched         *auth.Scheduler
@@ -122,6 +124,7 @@ type Handler struct {
 	embyProxy         *embyproxy.Service
 	fnosProxy         *fnosproxy.Service
 	quarktv           *quarktv.Service
+	drama             *dramatransfer.Service // 追剧转存服务（来自Trae）
 	apiKeys           *apikey.Service
 	auth              *auth.Service
 	authSched         *auth.Scheduler
@@ -171,6 +174,7 @@ func NewRouter(d Deps) http.Handler {
 		embyProxy:         d.EmbyProxy,
 		fnosProxy:         d.FnosProxy,
 		quarktv:           d.QuarkTV,
+		drama:             d.Drama,
 		apiKeys:           d.ApiKeys,
 		auth:              d.Auth,
 		authSched:         d.AuthSched,
@@ -420,6 +424,22 @@ func NewRouter(d Deps) http.Handler {
 					r.Get("/runs", h.listAutomationRuns)
 					r.Post("/runs/clear", h.clearAutomationRuns)
 					r.Get("/options", h.automationOptions)
+				})
+				// 追剧转存任务管理（来自Trae）
+				r.Route("/drama", func(r chi.Router) {
+					r.Get("/tasks", h.listDramaTasks)
+					r.Post("/tasks", h.createDramaTask)
+					r.Get("/tasks/{id}", h.getDramaTask)
+					r.Put("/tasks/{id}", h.updateDramaTask)
+					r.Delete("/tasks/{id}", h.deleteDramaTask)
+					r.Post("/tasks/{id}/run", h.runDramaTask)
+					r.Get("/tasks/{id}/runs", h.listDramaTaskRuns)
+					// 命名正则规则维护（来自Trae）
+					r.Get("/rules", h.listMagicRegexRules)
+					r.Put("/rules/{key}", h.upsertMagicRegexRule)
+					r.Delete("/rules/{key}", h.deleteMagicRegexRule)
+					// 分享链接预览（来自Trae）
+					r.Post("/share/preview", h.previewDramaShare)
 				})
 				r.Route("/fuse", func(r chi.Router) {
 					r.Get("/status", h.fuseStatus)

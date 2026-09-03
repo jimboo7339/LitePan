@@ -24,6 +24,7 @@ func wireHTTPServer(cfg config.Config, logs *logx.Manager, st *storeBundle, core
 	notifySvc := notification.NewService(notification.Options{
 		Repo:     st.store.Notifications,
 		Accounts: st.store.Accounts,
+		Settings: st.settings, // 注入全局设置，用于读取通知渠道 webhook，来自Trae
 		Log:      logs.For(logx.ModuleSystem),
 	})
 	notifySvc.Register(core.bus)
@@ -153,6 +154,7 @@ func wireHTTPServer(cfg config.Config, logs *logx.Manager, st *storeBundle, core
 		EmbyProxy:         svc.embyProxy,
 		FnosProxy:         svc.fnosProxy,
 		QuarkTV:           svc.quarktv,
+		Drama:             svc.drama,
 		ApiKeys:           apiKeySvc,
 		Auth:              core.auth,
 		AuthSched:         core.sched,

@@ -85,6 +85,15 @@ const (
 	KeyAIOrganizeModel         = "ai_organize_model"
 	KeyMOClassificationEnabled = "mo_classification_enabled"
 	KeyMOClassificationConfig  = "mo_classification_config"
+
+	// 追剧转存全局调度配置，来自Trae
+	KeyDramaSchedulerEnabled = "drama_scheduler_enabled"
+	KeyDramaSchedulerCrontab = "drama_scheduler_crontab"
+
+	// 通知渠道全局配置（企微/钉钉/飞书 webhook），来自Trae
+	KeyNotifyWecomWebhook    = "notify_wecom_webhook"
+	KeyNotifyDingtalkWebhook = "notify_dingtalk_webhook"
+	KeyNotifyFeishuWebhook   = "notify_feishu_webhook"
 )
 
 // Type 决定后台表单控件与校验方式。
@@ -263,6 +272,14 @@ func defaultSpecs() []Spec {
 			Default: "",
 			Hidden:  true,
 		},
+		// 追剧转存全局调度配置，来自Trae
+		boolSpec(KeyDramaSchedulerEnabled, "drama", "启用定时转存", "开启后按 Cron 表达式定时扫描所有已启用的转存任务，配合任务级运行星期/截止日期判断是否执行。", "true"),
+		stringSpec(KeyDramaSchedulerCrontab, "drama", "转存 Cron 表达式", "标准 5 段式 Cron（分 时 日 月 周），如「0 */2 * * *」=每 2 小时检查一次。", "0 */2 * * *"),
+		// 通知渠道全局配置（企微/钉钉/飞书 webhook），来自Trae
+		// 留空表示不启用该渠道；转存任务和 STRM 任务执行完成后会自动调用已配置的渠道推送通知。
+		stringSpec(KeyNotifyWecomWebhook, "notification", "企业微信机器人 Webhook", "企业微信群机器人 Webhook 地址，格式：https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx。留空表示不启用。", ""),
+		stringSpec(KeyNotifyDingtalkWebhook, "notification", "钉钉机器人 Webhook", "钉钉群机器人 Webhook 地址，格式：https://oapi.dingtalk.com/robot/send?access_token=xxx。留空表示不启用。", ""),
+		stringSpec(KeyNotifyFeishuWebhook, "notification", "飞书机器人 Webhook", "飞书群机器人 Webhook 地址，格式：https://open.feishu.cn/open-apis/bot/v2/hook/xxx。留空表示不启用。", ""),
 		{
 			Key:         KeyOAuthServerURL,
 			Type:        TypeString,
@@ -344,5 +361,6 @@ func categories() []Category {
 		{ID: "performance", Label: "性能设置"},
 		{ID: "strm", Label: "STRM 设置"},
 		{ID: "media_organize", Label: "媒体整理设置"},
+		{ID: "notification", Label: "通知渠道"},
 	}
 }
