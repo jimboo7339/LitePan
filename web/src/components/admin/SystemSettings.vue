@@ -144,12 +144,16 @@ const tabs = computed(() => [
 
 const systemItems = computed(() => items.value.filter((it) => it.category === "system"));
 const accountDisplayItems = computed(() => items.value.filter((it) => it.category === "account_display"));
-const otherSettingsItems = computed(() => [...systemItems.value, ...accountDisplayItems.value]);
+// 通知渠道配置项（企微/钉钉/飞书 webhook），来自Trae
+const notificationItems = computed(() => items.value.filter((it) => it.category === "notification"));
+const otherSettingsItems = computed(() => [...systemItems.value, ...accountDisplayItems.value, ...notificationItems.value]);
 const systemChangedKeys = computed(() => otherSettingsItems.value.filter((it) => isChanged(it)).map((it) => it.key));
 const systemChangedCount = computed(() => systemChangedKeys.value.length);
 const serviceSettingsCards = computed(() => [
   { key: "auth-log", title: "授权与日志", items: systemItems.value },
   { key: "account-display", title: "网盘账号显示", items: accountDisplayItems.value },
+  // 通知渠道卡片，来自Trae
+  { key: "notification", title: "通知渠道", items: notificationItems.value },
 ].filter((group) => group.items.length > 0));
 
 const passwordsMismatch = computed(

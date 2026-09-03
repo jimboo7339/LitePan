@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -13,12 +14,15 @@ import (
 	"litepan/internal/httpx"
 )
 
+// baseURL 与 CASX 一致使用 drive-pc.quark.cn，来自Trae
 const (
-	baseURL           = "https://drive.quark.cn/1/clouddrive"
+	baseURL           = "https://drive-pc.quark.cn/1/clouddrive"
+	baseURLApp        = "https://drive-m.quark.cn/1/clouddrive"
 	profileMemberURL  = "https://drive-pc.quark.cn/1/clouddrive"
 	profileAccountURL = "https://pan.quark.cn"
 	referer           = "https://pan.quark.cn"
-	clientUA          = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch"
+	// clientUA 与 CASX 一致，来自Trae
+	clientUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/3.14.2 Chrome/112.0.5615.165 Electron/24.1.3.8 Safari/537.36 Channel/pckk_other_ch"
 
 	pathList         = "/file/sort"
 	pathInfo         = "/file/info"
@@ -43,6 +47,31 @@ const (
 	proxyPartSize         = 10 * 1024 * 1024
 	proxyConcurrency      = 3
 )
+
+// matchMparamFromCookie 与 CASX _match_mparam_form_cookie 一致，使用正则提取 kps/sign/vcode，来自Trae
+var (
+	reKps   = regexp.MustCompile(`(?:^|[;&\s])kps=([a-zA-Z0-9%+/=]+)`)
+	reSign  = regexp.MustCompile(`(?:^|[;&\s])sign=([a-zA-Z0-9%+/=]+)`)
+	reVcode = regexp.MustCompile(`(?:^|[;&\s])vcode=([a-zA-Z0-9%+/=]+)`)
+)
+
+func (d *Driver) matchMparamFromCookie(cookie string) map[string]string {
+	out := map[string]string{}
+	if cookie == "" {
+		return out
+	}
+	// 与 CASX 一致：正则匹配后做 %25 -> % 解码，来自Trae
+	if m := reKps.FindStringSubmatch(cookie); len(m) > 1 {
+		out["kps"] = strings.ReplaceAll(m[1], "%25", "%")
+	}
+	if m := reSign.FindStringSubmatch(cookie); len(m) > 1 {
+		out["sign"] = strings.ReplaceAll(m[1], "%25", "%")
+	}
+	if m := reVcode.FindStringSubmatch(cookie); len(m) > 1 {
+		out["vcode"] = strings.ReplaceAll(m[1], "%25", "%")
+	}
+	return out
+}
 
 func (d *Driver) apiBase() string { return baseURL }
 
@@ -83,17 +112,49 @@ func (d *Driver) apiRequestTo(ctx context.Context, apiBase, method, path string,
 	query.Set("pr", "ucpro")
 	query.Set("fr", "pc")
 
+	useMobileShare := false
+	// 与 CASX 一致：path 含 "share" 且 cookie 有 kps/sign/vcode 时切移动端，来自Trae
+	if apiBase == baseURL && strings.Contains(path, "share") {
+		ck := d.currentCookie()
+		mparam := d.matchMparamFromCookie(ck)
+		if ck != "" && len(mparam) == 3 {
+			apiBase = baseURLApp
+			query.Set("device_model", "M2011K2C")
+			query.Set("entry", "default_clouddrive")
+			query.Set("_t_group", "0%3A_s_vp%3A1")
+			query.Set("dmn", "Mi%2B11")
+			query.Set("fr", "android")
+			query.Set("pf", "3300")
+			query.Set("bi", "35937")
+			query.Set("ve", "7.4.5.680")
+			query.Set("ss", "411x875")
+			query.Set("mi", "M2011K2C")
+			query.Set("nt", "5")
+			query.Set("nw", "0")
+			query.Set("kt", "4")
+			query.Set("pr", "ucpro")
+			query.Set("sv", "release")
+			query.Set("dt", "phone")
+			query.Set("data_from", "ucapi")
+			query.Set("kps", mparam["kps"])
+			query.Set("sign", mparam["sign"])
+			query.Set("vcode", mparam["vcode"])
+			query.Set("app", "clouddrive")
+			query.Set("kkkk", "1")
+			useMobileShare = true
+		}
+	}
+
 	req, err := httpx.NewJSONRequest(ctx, method, apiBase+path, query, body)
 	if err != nil {
 		return nil, domain.Wrap(domain.CodeInternal, err)
 	}
-	httpx.SetHeaders(req, map[string]string{
-		"User-Agent": clientUA,
-		"Referer":    referer,
-		"Accept":     "application/json, text/plain, */*",
-	})
-	if ck := d.currentCookie(); ck != "" {
-		req.Header.Set("Cookie", ck)
+	// 与 CASX 一致：仅设 User-Agent，不设 Referer/Accept（避免触发夸克 save 接口 token 校验异常），来自Trae
+	req.Header.Set("User-Agent", clientUA)
+	if !useMobileShare {
+		if ck := d.currentCookie(); ck != "" {
+			req.Header.Set("Cookie", ck)
+		}
 	}
 
 	resp, data, err := httpx.Execute(d.client, req, 16<<20)
@@ -106,7 +167,7 @@ func (d *Driver) apiRequestTo(ctx context.Context, apiBase, method, path string,
 	case resp.StatusCode == http.StatusUnauthorized:
 		return nil, domain.Errorf(domain.CodeAuthExpired, "夸克 Cookie 认证失败，请重新获取 Cookie")
 	case resp.StatusCode == http.StatusForbidden:
-		return nil, domain.Errorf(domain.CodePermissionDenied, "夸克访问被拒绝，Cookie 权限不足")
+		return nil, domain.Errorf(domain.CodePermissionDenied, "夸克访问被拒绝，Cookie 权限不足: HTTP %d", resp.StatusCode)
 	case resp.StatusCode >= 400:
 		return nil, domain.Errorf(domain.CodeDriverError, "夸克 HTTP %d: %s", resp.StatusCode, httpx.Truncate(data, 300))
 	}

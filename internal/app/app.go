@@ -16,6 +16,7 @@ import (
 	"litepan/internal/cache"
 	"litepan/internal/cacheretention"
 	"litepan/internal/config"
+	"litepan/internal/dramatransfer"
 	"litepan/internal/driver"
 	"litepan/internal/embyproxy"
 	"litepan/internal/eventbus"
@@ -59,6 +60,7 @@ type App struct {
 	cacheRetention   *cacheretention.Service
 	embyProxy        *embyproxy.Service
 	fnosProxy        *fnosproxy.Service
+	drama            *dramatransfer.Service // 追剧转存服务（来自Trae）
 	httpSrv          *http.Server
 	httpBaseCancel   context.CancelFunc
 	restartCh        <-chan struct{}
@@ -142,6 +144,7 @@ func New(ctx context.Context, opts Options) (*App, error) {
 		cacheRetention:   svc.cacheRetention,
 		embyProxy:        svc.embyProxy,
 		fnosProxy:        svc.fnosProxy,
+		drama:            svc.drama,
 		httpSrv:          httpSrv,
 		httpBaseCancel:   httpBaseCancel,
 		restartCh:        restartCh,
@@ -164,6 +167,9 @@ func (a *App) Run(ctx context.Context) error {
 	}
 	if a.automation != nil {
 		a.automation.Start(ctx)
+	}
+	if a.drama != nil {
+		a.drama.Start(ctx) // 启动追剧转存定时调度（来自Trae）
 	}
 	if a.fuse != nil {
 		a.fuse.Start(ctx)
