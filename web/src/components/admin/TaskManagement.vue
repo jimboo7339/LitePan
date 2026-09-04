@@ -323,7 +323,8 @@ const drawerSaving = computed(() => {
   if (drawerKind.value === "strm") return readPanelSaving(strmSettingsRef.value?.saving);
   if (drawerKind.value === "cache") return readPanelSaving(cacheSettingsRef.value?.saving);
   if (drawerKind.value === "organize") return readPanelSaving(organizeSettingsRef.value?.saving);
-  return readPanelSaving(strmSettingsRef.value?.saving);
+  if (drawerKind.value === "drama") return readPanelSaving(dramaSettingsRef.value?.saving); // 来自Trae
+  return false;
 });
 const drawerCanSave = drawerDirty;
 

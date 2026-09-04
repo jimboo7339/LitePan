@@ -611,12 +611,49 @@ func (e *DramaExecutor) syncSubdirs(ctx context.Context, pwdID, stoken string, s
 
 		existingDestFID := destDirMap[name]
 
-		// delete_then_resave 模式：先删后存（来自Trae）
+		// delete_then_resave 模式：为避免"先删后转存失败"导致数据丢失，
+		// 改为先把分享目录转存到临时目录 __litepan_tmp_<ts>_<name>，成功后再删旧目录、重命名新目录（来自Trae）。
 		if mode == "delete_then_resave" && existingDestFID != "" && deleter != nil {
+			tmpName := fmt.Sprintf("__litepan_tmp_%d_%s", time.Now().UnixNano(), name)
+			_, tmpSavedFIDs, saveErr := e.st.SaveShareFiles(ctx, driver.SaveShareReq{
+				FIDs:      []string{fid},
+				FIDTokens: []string{dir.ShareFIDToken},
+				ToPdirFID: destFID,
+				PwdID:     pwdID,
+				Stoken:    stoken,
+				FileNames: []string{tmpName},
+			})
+			if saveErr != nil {
+				// 转存失败，保留原目录不动（来自Trae）
+				e.line(fmt.Sprintf("FAIL: 转存目录 %s 失败（保留原目录不动）: %v", name, saveErr))
+				continue
+			}
+			// 从返回的 savedFIDs 取新目录 fid（SaveShareFiles 对目录返回单个 newFID）（来自Trae）
+			tmpDirFID := ""
+			for _, v := range tmpSavedFIDs {
+				if v = strings.TrimSpace(v); v != "" {
+					tmpDirFID = v
+					break
+				}
+			}
+			if tmpDirFID == "" {
+				// 未拿到新目录 fid，无法安全替换，跳过（来自Trae）
+				e.line(fmt.Sprintf("WARN: 转存目录 %s 成功但未返回 fid，跳过替换（保留原目录）", name))
+				continue
+			}
 			if err := deleter.DeleteFiles(ctx, []string{existingDestFID}); err != nil {
+				// 删除旧失败但新的已转存，记录警告继续尝试重命名（可能重命名也因同名失败）（来自Trae）
 				e.line(fmt.Sprintf("WARN: 删除旧目录 %s 失败: %v", name, err))
 			}
-			existingDestFID = ""
+			renamer2, okRenamer := e.drv.(driver.Renamer)
+			if okRenamer {
+				if err := renamer2.RenameFile(ctx, tmpDirFID, name); err != nil {
+					e.line(fmt.Sprintf("WARN: 重命名临时目录 %s -> %s 失败: %v", tmpName, name, err))
+				}
+			}
+			e.transferCount++
+			tree.add(1, "📁"+name)
+			continue
 		}
 
 		if existingDestFID != "" {

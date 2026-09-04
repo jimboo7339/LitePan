@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"litepan/internal/auth"
 	"litepan/internal/domain"
 	"litepan/internal/eventbus"
 )
@@ -29,15 +30,35 @@ func (s *Service) notifyScanSuccess(task *domain.StrmTask, result *ScanResult) {
 	if result.RemovedCount > 0 {
 		summaryParts = append(summaryParts, fmt.Sprintf("清理 %d 个", result.RemovedCount))
 	}
-	message := fmt.Sprintf("✅ STRM任务「%s」扫描完成：%s", task.Name, strings.Join(summaryParts, "，"))
+	message := fmt.Sprintf("STRM任务「%s」扫描完成：%s", task.Name, strings.Join(summaryParts, "，"))
 	if result.ScannedCount > 0 {
 		message += fmt.Sprintf("\n扫描文件总数：%d", result.ScannedCount)
 	}
 	s.bus.Publish(context.Background(), eventbus.NotificationCreated{
 		Level:     "success",
 		Category:  "strm",
-		Title:     "【STRM 任务】",
+		Title:     fmt.Sprintf("【STRM 任务】%s 扫描完成", task.Name),
 		Message:   message,
+		AccountID: task.AccountID,
+		RefID:     task.ID,
+	})
+}
+
+// notifyScanFailure STRM 扫描整体失败（非认证类）时的通知（来自Trae）。
+// 与 notifyScanFailures 不同：那个是"扫描成功但有单文件失败"，这个是整次扫描异常中断。
+func (s *Service) notifyScanFailure(task *domain.StrmTask, cause error) {
+	if s == nil || s.bus == nil || task == nil || cause == nil {
+		return
+	}
+	// 认证错误会走 PauseTask 通知链路，这里不发避免重复（来自Trae）
+	if auth.IsAuthError(cause) {
+		return
+	}
+	s.bus.Publish(context.Background(), eventbus.NotificationCreated{
+		Level:     "error",
+		Category:  domain.NotificationCategoryStrmScanWarn,
+		Title:     fmt.Sprintf("【STRM 任务】%s 扫描失败", task.Name),
+		Message:   fmt.Sprintf("STRM任务「%s」扫描失败：%s", task.Name, cause.Error()),
 		AccountID: task.AccountID,
 		RefID:     task.ID,
 	})

@@ -251,6 +251,11 @@ function isChanged(it: SettingItem): boolean {
   return form[it.key] !== original[it.key];
 }
 
+// 敏感配置项（webhook / token / secret / key 等），渲染为 password 输入避免明文暴露，来自Trae
+function isSensitiveKey(key: string): boolean {
+  return /webhook|token|secret|password|api_key|apikey/i.test(key || "");
+}
+
 function displayLabel(it: SettingItem): string {
   if (it.type === "int" && it.unit) return `${it.label}（${it.unit}）`;
   return it.label;
@@ -807,7 +812,13 @@ async function submit() {
                 </div>
 
                 <div v-else class="field-text">
-                  <AppInput v-model="form[it.key]" :placeholder="it.default" autocomplete="off" />
+                  <AppInput
+                    v-model="form[it.key]"
+                    :type="isSensitiveKey(it.key) ? 'password' : 'text'"
+                    :placeholder="it.default"
+                    :maxlength="2048"
+                    autocomplete="off"
+                  />
                 </div>
               </div>
             </template>

@@ -155,6 +155,7 @@ func (s *Service) persist(ctx context.Context, level, category, title, message s
 
 // sendWebhook 根据全局设置调用已配置的机器人 webhook，来自Trae
 // 任意渠道配置非空即推送；推送异步执行，不阻塞通知持久化主流程
+// 注意：message 里如果已含 ✅/❌/⚠️ 等结果前缀，webhook 发送时会剥掉再统一加 levelEmoji，避免重复（来自Trae）
 func (s *Service) sendWebhook(level, category, title, message string) {
 	if s.settings == nil {
 		return
@@ -163,12 +164,14 @@ func (s *Service) sendWebhook(level, category, title, message string) {
 	if !isTaskCategory(category) {
 		return
 	}
-	wecomHook := s.settings.String(settings.KeyNotifyWecomWebhook)
-	dingtalkHook := s.settings.String(settings.KeyNotifyDingtalkWebhook)
-	feishuHook := s.settings.String(settings.KeyNotifyFeishuWebhook)
+	// TrimSpace 兜底：避免用户在设置里粘贴 URL 时残留空格导致请求失败（来自Trae）
+	wecomHook := strings.TrimSpace(s.settings.String(settings.KeyNotifyWecomWebhook))
+	dingtalkHook := strings.TrimSpace(s.settings.String(settings.KeyNotifyDingtalkWebhook))
+	feishuHook := strings.TrimSpace(s.settings.String(settings.KeyNotifyFeishuWebhook))
 	if wecomHook == "" && dingtalkHook == "" && feishuHook == "" {
 		return
 	}
+	message = stripLeadingEmoji(message)
 	go func() {
 		if wecomHook != "" {
 			s.sendWecom(wecomHook, level, title, message)
@@ -180,6 +183,17 @@ func (s *Service) sendWebhook(level, category, title, message string) {
 			s.sendFeishu(feishuHook, level, title, message)
 		}
 	}()
+}
+
+// stripLeadingEmoji 剥掉消息开头可能存在的结果类 emoji（✅/❌/⚠️/ℹ️），避免 webhook 端再重复加一遍（来自Trae）
+func stripLeadingEmoji(s string) string {
+	trimmed := strings.TrimSpace(s)
+	for _, e := range []string{"✅", "❌", "⚠️", "⚠", "ℹ️", "ℹ"} {
+		if strings.HasPrefix(trimmed, e) {
+			return strings.TrimSpace(strings.TrimPrefix(trimmed, e))
+		}
+	}
+	return s
 }
 
 // isTaskCategory 判断是否为任务执行类通知（需要转发到 webhook），来自Trae
@@ -207,11 +221,14 @@ func levelEmoji(level string) string {
 
 // sendWecom 推送到企业微信群机器人，来自Trae
 // 文档：https://developer.work.weixin.qq.com/document/path/91770
+// 注意：企微 markdown 用 \n 不会真正换行，需转成 <br>（来自Trae）
 func (s *Service) sendWecom(webhook, level, title, message string) {
+	content := fmt.Sprintf("%s **%s**<br>%s", levelEmoji(level), title, message)
+	content = strings.ReplaceAll(content, "\n", "<br>")
 	payload := map[string]any{
 		"msgtype": "markdown",
 		"markdown": map[string]string{
-			"content": fmt.Sprintf("%s **%s**\n%s", levelEmoji(level), title, message),
+			"content": content,
 		},
 	}
 	s.postWebhook("wecom", webhook, payload)

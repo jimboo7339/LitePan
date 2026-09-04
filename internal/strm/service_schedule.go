@@ -184,6 +184,7 @@ func (s *Service) runTaskAsync(task *domain.StrmTask) {
 				_ = s.PauseTask(ctx, task.ID, domain.PauseReasonAuthFailure, err.Error())
 				return
 			}
+			s.notifyScanFailure(task, err) // 非认证类扫描失败也推送通知，避免用户完全不知情（来自Trae）
 		} else if errors.Is(err, context.Canceled) {
 			s.log.Info("STRM 任务已停止", "task_id", task.ID)
 		} else {

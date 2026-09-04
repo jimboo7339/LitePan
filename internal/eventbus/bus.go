@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"reflect"
 	"sync"
+	"time"
 )
 
 // Handler 是某事件类型 T 的处理函数。
@@ -58,12 +59,17 @@ func Subscribe[T any](b *Bus, h Handler[T]) {
 	b.mu.Unlock()
 }
 
-// Publish 异步发布事件；总线已关闭时静默丢弃。
+// Publish 异步发布事件；总线已关闭或队列满时静默丢弃。
+// 队列满时最多等待 500ms，防止调度器 goroutine 因下游变慢而无限阻塞（来自Trae）。
 func (b *Bus) Publish(ctx context.Context, evt any) {
 	env := envelope{ctx: ctx, evt: evt, typ: reflect.TypeOf(evt)}
+	timer := time.NewTimer(500 * time.Millisecond)
+	defer timer.Stop()
 	select {
 	case b.queue <- env:
 	case <-b.closed:
+	case <-timer.C:
+		b.log.Warn("eventbus publish dropped (queue full)")
 	}
 }
 
