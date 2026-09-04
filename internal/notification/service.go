@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"litepan/internal/domain"
@@ -28,12 +27,6 @@ type Service struct {
 	accounts domain.AccountRepository
 	settings *settings.Service
 	log      *slog.Logger
-
-	// subs 是未读数订阅者（前端 SSE 长连接）。每个通道带 1 个缓冲，
-	// 推送采用非阻塞写：慢客户端只保留最新值，不会拖住发布方。
-	subMu   sync.Mutex
-	subs    map[int64]chan int
-	nextSub int64
 }
 
 func NewService(opts Options) *Service {
@@ -41,68 +34,7 @@ func NewService(opts Options) *Service {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Service{repo: opts.Repo, accounts: opts.Accounts, settings: opts.Settings, log: log, subs: map[int64]chan int{}}
-}
-
-// Subscribe 订阅未读数变化，返回只读通道和退订函数；退订可重复调用。
-func (s *Service) Subscribe() (<-chan int, func()) {
-	if s == nil {
-		closed := make(chan int)
-		close(closed)
-		return closed, func() {}
-	}
-	ch := make(chan int, 1)
-	s.subMu.Lock()
-	id := s.nextSub
-	s.nextSub++
-	s.subs[id] = ch
-	s.subMu.Unlock()
-
-	var once sync.Once
-	return ch, func() {
-		once.Do(func() {
-			s.subMu.Lock()
-			if current, ok := s.subs[id]; ok {
-				delete(s.subs, id)
-				close(current)
-			}
-			s.subMu.Unlock()
-		})
-	}
-}
-
-// publishUnread 重算未读数并推给所有订阅者。通知已落库后才调用，因此用独立上下文，
-// 避免发布方请求结束时上下文已取消导致推送丢失。
-func (s *Service) publishUnread() {
-	if s == nil || s.repo == nil {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	count, err := s.repo.UnreadCount(ctx)
-	if err != nil {
-		return
-	}
-	s.subMu.Lock()
-	defer s.subMu.Unlock()
-	for _, ch := range s.subs {
-		select {
-		case ch <- count:
-		default:
-			// 缓冲中已有旧值时用最新值替换，避免突发通知后铃铛停留在旧数量。
-			select {
-			case <-ch:
-			default:
-			}
-			select {
-			case ch <- count:
-			default:
-			}
-		}
-	}
-=======
 	return &Service{repo: opts.Repo, accounts: opts.Accounts, settings: opts.Settings, log: log}
->>>>>>> 7288e9c (feat: 追剧转存(drama) + 通知渠道(企微/钉钉/飞书webhook) + 转存流程修复（来自Trae）)
 }
 
 func (s *Service) Register(bus *eventbus.Bus) {
@@ -132,58 +64,35 @@ func (s *Service) MarkRead(ctx context.Context, id int64) error {
 	if s.repo == nil {
 		return domain.Errorf(domain.CodeInternal, "通知仓储未就绪")
 	}
-	if err := s.repo.MarkRead(ctx, id); err != nil {
-		return err
-	}
-	s.publishUnread()
-	return nil
+	return s.repo.MarkRead(ctx, id)
 }
 
 func (s *Service) MarkAllRead(ctx context.Context) (int64, error) {
 	if s.repo == nil {
 		return 0, domain.Errorf(domain.CodeInternal, "通知仓储未就绪")
 	}
-	n, err := s.repo.MarkAllRead(ctx)
-	if err != nil {
-		return 0, err
-	}
-	s.publishUnread()
-	return n, nil
+	return s.repo.MarkAllRead(ctx)
 }
 
 func (s *Service) Delete(ctx context.Context, id int64) error {
 	if s.repo == nil {
 		return domain.Errorf(domain.CodeInternal, "通知仓储未就绪")
 	}
-	if err := s.repo.Delete(ctx, id); err != nil {
-		return err
-	}
-	s.publishUnread()
-	return nil
+	return s.repo.Delete(ctx, id)
 }
 
 func (s *Service) DeleteAll(ctx context.Context) (int64, error) {
 	if s.repo == nil {
 		return 0, domain.Errorf(domain.CodeInternal, "通知仓储未就绪")
 	}
-	n, err := s.repo.DeleteAll(ctx)
-	if err != nil {
-		return 0, err
-	}
-	s.publishUnread()
-	return n, nil
+	return s.repo.DeleteAll(ctx)
 }
 
 func (s *Service) DeleteByRef(ctx context.Context, category string, refID int64) (int64, error) {
 	if s.repo == nil {
 		return 0, domain.Errorf(domain.CodeInternal, "通知仓储未就绪")
 	}
-	n, err := s.repo.DeleteByRef(ctx, category, refID)
-	if err != nil {
-		return 0, err
-	}
-	s.publishUnread()
-	return n, nil
+	return s.repo.DeleteByRef(ctx, category, refID)
 }
 
 func (s *Service) Notify(ctx context.Context, level, category, title, message string, accountID, refID int64) {
@@ -238,10 +147,7 @@ func (s *Service) persist(ctx context.Context, level, category, title, message s
 	})
 	if err != nil {
 		s.log.Warn("persist notification failed", "title", title, "err", err)
-		return
 	}
-	// 新通知落库成功即推送一次未读数，前端铃铛无需再靠轮询发现。
-	s.publishUnread()
 	// 推送到已配置的外部通知渠道（企微/钉钉/飞书），来自Trae
 	// 仅对任务执行类通知转发，避免认证类通知刷屏；使用独立 context 避免任务 cancel 影响推送
 	s.sendWebhook(level, category, title, message)
@@ -249,6 +155,7 @@ func (s *Service) persist(ctx context.Context, level, category, title, message s
 
 // sendWebhook 根据全局设置调用已配置的机器人 webhook，来自Trae
 // 任意渠道配置非空即推送；推送异步执行，不阻塞通知持久化主流程
+// 正文中的 ✅/❌/⚠️ emoji 原样保留，webhook 端只在其之前加 levelEmoji 结果前缀（来自Trae）
 func (s *Service) sendWebhook(level, category, title, message string) {
 	if s.settings == nil {
 		return
@@ -257,9 +164,10 @@ func (s *Service) sendWebhook(level, category, title, message string) {
 	if !isTaskCategory(category) {
 		return
 	}
-	wecomHook := s.settings.String(settings.KeyNotifyWecomWebhook)
-	dingtalkHook := s.settings.String(settings.KeyNotifyDingtalkWebhook)
-	feishuHook := s.settings.String(settings.KeyNotifyFeishuWebhook)
+	// TrimSpace 兜底：避免用户在设置里粘贴 URL 时残留空格导致请求失败（来自Trae）
+	wecomHook := strings.TrimSpace(s.settings.String(settings.KeyNotifyWecomWebhook))
+	dingtalkHook := strings.TrimSpace(s.settings.String(settings.KeyNotifyDingtalkWebhook))
+	feishuHook := strings.TrimSpace(s.settings.String(settings.KeyNotifyFeishuWebhook))
 	if wecomHook == "" && dingtalkHook == "" && feishuHook == "" {
 		return
 	}
@@ -301,11 +209,12 @@ func levelEmoji(level string) string {
 
 // sendWecom 推送到企业微信群机器人，来自Trae
 // 文档：https://developer.work.weixin.qq.com/document/path/91770
+// 使用纯文本类型（text），保留原消息中的换行与 emoji，避免用户需要切到企微才能看格式（来自Trae）
 func (s *Service) sendWecom(webhook, level, title, message string) {
 	payload := map[string]any{
-		"msgtype": "markdown",
-		"markdown": map[string]string{
-			"content": fmt.Sprintf("%s **%s**\n%s", levelEmoji(level), title, message),
+		"msgtype": "text",
+		"text": map[string]string{
+			"content": formatText(level, title, message),
 		},
 	}
 	s.postWebhook("wecom", webhook, payload)
@@ -313,12 +222,12 @@ func (s *Service) sendWecom(webhook, level, title, message string) {
 
 // sendDingtalk 推送到钉钉群机器人，来自Trae
 // 文档：https://open.dingtalk.com/document/robots/custom-robot-access
+// 使用纯文本类型（text），与企微/飞书保持一致，正文中的 \n 与 emoji 都会原样展示（来自Trae）
 func (s *Service) sendDingtalk(webhook, level, title, message string) {
 	payload := map[string]any{
-		"msgtype": "markdown",
-		"markdown": map[string]string{
-			"title": title,
-			"text":  fmt.Sprintf("%s **%s**\n\n%s", levelEmoji(level), title, message),
+		"msgtype": "text",
+		"text": map[string]string{
+			"content": formatText(level, title, message),
 		},
 	}
 	s.postWebhook("dingtalk", webhook, payload)
@@ -330,10 +239,49 @@ func (s *Service) sendFeishu(webhook, level, title, message string) {
 	payload := map[string]any{
 		"msg_type": "text",
 		"content": map[string]string{
-			"text": fmt.Sprintf("%s %s\n%s", levelEmoji(level), title, message),
+			"text": formatText(level, title, message),
 		},
 	}
 	s.postWebhook("feishu", webhook, payload)
+}
+
+// formatText 组合通知正文（来自Trae）。
+// 优先保留正文自带的 ✅/❌/⚠️ 结果前缀（drama/strm 发布时已加）；
+// 仅当正文没有结果前缀时才用 levelEmoji 补一个，避免群机器人收到"✅ ✅xxx"的双 emoji。
+func formatText(level, title, message string) string {
+	title = strings.TrimSpace(title)
+	message = strings.TrimSpace(message)
+	if hasResultEmoji(message) {
+		if title == "" {
+			return message
+		}
+		if message == "" {
+			return title
+		}
+		return title + "\n" + message
+	}
+	prefix := levelEmoji(level)
+	if title == "" && message == "" {
+		return prefix
+	}
+	if title == "" {
+		return prefix + " " + message
+	}
+	if message == "" {
+		return prefix + " " + title
+	}
+	return prefix + " " + title + "\n" + message
+}
+
+// hasResultEmoji 判断消息是否已带结果类 emoji 前缀（来自Trae）
+func hasResultEmoji(s string) bool {
+	t := strings.TrimSpace(s)
+	for _, e := range []string{"✅", "❌", "⚠️", "⚠", "ℹ️", "ℹ"} {
+		if strings.HasPrefix(t, e) {
+			return true
+		}
+	}
+	return false
 }
 
 // postWebhook 统一的 HTTP POST 推送，带 10 秒超时，来自Trae
