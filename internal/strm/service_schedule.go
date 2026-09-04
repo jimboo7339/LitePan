@@ -201,6 +201,9 @@ func (s *Service) runTaskAsync(task *domain.StrmTask) {
 			s.log.Warn("strm update scan failed", "task_id", task.ID, "err", err)
 		}
 		if err == nil || errors.Is(err, context.Canceled) {
+			if err == nil {
+				s.notifyScanSuccess(task, &result) // 扫描成功有变更时推送通知（来自Trae）
+			}
 			s.notifyScanFailures(task, result.Failures)
 			if err == nil && result.Protected {
 				s.notifyScanProtected(task, result.ProtectReason)
