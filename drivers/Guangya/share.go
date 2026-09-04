@@ -45,25 +45,51 @@ type shareAccessTokenData struct {
 }
 
 // shareFileEntry 是光鸭分享文件单项（来自Trae）
+// 字段参考 CASX guangya_adapter.py _pick_is_dir 覆盖完整，避免误判文件为目录。
 type shareFileEntry struct {
 	FileID   string `json:"fileId"`
 	ParentID string `json:"parentId"`
 	FileName string `json:"fileName"`
 	FileSize int64  `json:"fileSize"`
-	ResType  int    `json:"resType"` // 2=文件夹
+	ResType  int    `json:"resType"`  // 2=文件夹
 	UTime    int64  `json:"utime"`
-	DirType  int    `json:"dirType"`
-	FileType int    `json:"fileType"`
+	DirType  int    `json:"dirType"`  // 保留解析但不用于判目录（语义存疑，CASX 也不用）
+	FileType *int   `json:"fileType"` // 用 *int 区分「字段缺失(nil)」和「值为 0」，避免默认值误伤（来自Trae）
+	Folder   bool   `json:"folder"`   // 光鸭分享 API 直接返回的布尔字段：是否文件夹
+	IsDir    bool   `json:"isDir"`    // 光鸭分享 API 可能返回的布尔字段别名
 }
 
+// toShareItem 转换为 LitePan 统一的 ShareItem（来自Trae）
+// IsDir 判断逻辑对齐 CASX _pick_is_dir：先查布尔字段 → 再查 fileType → 最后查 resType。
+// 不使用 dirType，因为 CASX 也不用它，且 dirType=1 在分享 API 中可能表示其他含义导致误判。
 func (e shareFileEntry) toShareItem() driver.ShareItem {
 	return driver.ShareItem{
 		FID:       e.FileID,
 		FileName:  e.FileName,
 		Size:      e.FileSize,
 		UpdatedAt: e.UTime,
-		IsDir:     e.ResType == 2 || e.DirType == 1,
+		IsDir:     e.pickIsDir(),
 	}
+}
+
+// pickIsDir 对齐 CASX guangya_adapter.py _pick_is_dir 的三级判断（来自Trae）：
+// 1. 先查 API 直接返回的布尔字段 folder / isDir（最可靠）
+// 2. 再查 fileType 是否存在且值为 0（CASX 约定 fileType=0 表示目录；
+//    必须先判 nil 避免 JSON 字段缺失时 int 默认 0 把所有条目判成目录）
+// 3. 最后查 resType == 2
+// 注意：不使用 DirType，因为 CASX 也不用它，且实测 dirType=1 会把文件误判成目录。
+func (e shareFileEntry) pickIsDir() bool {
+	// 第 1 级：布尔字段直接命中
+	if e.Folder || e.IsDir {
+		return true
+	}
+	// 第 2 级：fileType 必须先判非 nil 再比 0
+	// CASX 原逻辑: if file_type is not None and str(file_type) in {"0", "dir", ...}: return True
+	if e.FileType != nil && *e.FileType == 0 {
+		return true
+	}
+	// 第 3 级：resType == 2 是目录（最常用判据，普通文件列表也只靠它）
+	return e.ResType == 2
 }
 
 // shareListData 是 get_share_page_files_list 的 data（来自Trae）
