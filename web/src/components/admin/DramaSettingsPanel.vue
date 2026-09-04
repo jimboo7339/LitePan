@@ -34,7 +34,7 @@ type DramaSettingsForm = {
   notify_failure: boolean;
 };
 
-const { settings, isDirty: settingsChanged, revert: revertSettings } = useSettingsForm<DramaSettingsForm>({
+const { settings, isDirty: settingsChanged, revert: revertSettings, snapshotBaseline } = useSettingsForm<DramaSettingsForm>({
   default_pattern: "$TV_REGEX",
   default_replace: "",
   notify_success: true,
@@ -114,19 +114,21 @@ async function saveAll() {
       changed["drama_scheduler_crontab"] = schedulerCrontab.value;
     }
     if (Object.keys(changed).length > 0) {
-      const payload = await saveSettings(changed);
-      // 更新默认基线
-      const findItem = (key: string): SettingItem | undefined =>
-        payload.items.find((it) => it.key === key);
-      if (findItem("drama_scheduler_enabled")) {
+      await saveSettings(changed);
+      // 直接用当前值更新基线，不依赖 payload 返回值（来自Trae）
+      // 之前用 payload.items.find 判断是否更新基线，但后端返回的 items
+      // 可能不含我们改的 key，导致基线不更新、isDirty 永远为 true。
+      if ("drama_scheduler_enabled" in changed) {
         schedulerDefaults.enabled = schedulerEnabled.value;
       }
-      if (findItem("drama_scheduler_crontab")) {
+      if ("drama_scheduler_crontab" in changed) {
         schedulerDefaults.crontab = schedulerCrontab.value;
       }
     }
     // 保存本地配置，来自Trae
     persistLocalSettings();
+    // 重置 useSettingsForm 的 dirty 基线，否则 settingsChanged 永远为 true（来自Trae）
+    snapshotBaseline();
     toast.success("转存设置已保存");
   } catch {
     toast.error("保存失败");
