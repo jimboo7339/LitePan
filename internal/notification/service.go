@@ -155,7 +155,7 @@ func (s *Service) persist(ctx context.Context, level, category, title, message s
 
 // sendWebhook 根据全局设置调用已配置的机器人 webhook，来自Trae
 // 任意渠道配置非空即推送；推送异步执行，不阻塞通知持久化主流程
-// 注意：message 里如果已含 ✅/❌/⚠️ 等结果前缀，webhook 发送时会剥掉再统一加 levelEmoji，避免重复（来自Trae）
+// 正文中的 ✅/❌/⚠️ emoji 原样保留，webhook 端只在其之前加 levelEmoji 结果前缀（来自Trae）
 func (s *Service) sendWebhook(level, category, title, message string) {
 	if s.settings == nil {
 		return
@@ -171,7 +171,6 @@ func (s *Service) sendWebhook(level, category, title, message string) {
 	if wecomHook == "" && dingtalkHook == "" && feishuHook == "" {
 		return
 	}
-	message = stripLeadingEmoji(message)
 	go func() {
 		if wecomHook != "" {
 			s.sendWecom(wecomHook, level, title, message)
@@ -183,17 +182,6 @@ func (s *Service) sendWebhook(level, category, title, message string) {
 			s.sendFeishu(feishuHook, level, title, message)
 		}
 	}()
-}
-
-// stripLeadingEmoji 剥掉消息开头可能存在的结果类 emoji（✅/❌/⚠️/ℹ️），避免 webhook 端再重复加一遍（来自Trae）
-func stripLeadingEmoji(s string) string {
-	trimmed := strings.TrimSpace(s)
-	for _, e := range []string{"✅", "❌", "⚠️", "⚠", "ℹ️", "ℹ"} {
-		if strings.HasPrefix(trimmed, e) {
-			return strings.TrimSpace(strings.TrimPrefix(trimmed, e))
-		}
-	}
-	return s
 }
 
 // isTaskCategory 判断是否为任务执行类通知（需要转发到 webhook），来自Trae
@@ -221,14 +209,12 @@ func levelEmoji(level string) string {
 
 // sendWecom 推送到企业微信群机器人，来自Trae
 // 文档：https://developer.work.weixin.qq.com/document/path/91770
-// 注意：企微 markdown 用 \n 不会真正换行，需转成 <br>（来自Trae）
+// 使用纯文本类型（text），保留原消息中的换行与 emoji，避免用户需要切到企微才能看格式（来自Trae）
 func (s *Service) sendWecom(webhook, level, title, message string) {
-	content := fmt.Sprintf("%s **%s**<br>%s", levelEmoji(level), title, message)
-	content = strings.ReplaceAll(content, "\n", "<br>")
 	payload := map[string]any{
-		"msgtype": "markdown",
-		"markdown": map[string]string{
-			"content": content,
+		"msgtype": "text",
+		"text": map[string]string{
+			"content": formatText(level, title, message),
 		},
 	}
 	s.postWebhook("wecom", webhook, payload)
@@ -236,12 +222,12 @@ func (s *Service) sendWecom(webhook, level, title, message string) {
 
 // sendDingtalk 推送到钉钉群机器人，来自Trae
 // 文档：https://open.dingtalk.com/document/robots/custom-robot-access
+// 使用纯文本类型（text），与企微/飞书保持一致，正文中的 \n 与 emoji 都会原样展示（来自Trae）
 func (s *Service) sendDingtalk(webhook, level, title, message string) {
 	payload := map[string]any{
-		"msgtype": "markdown",
-		"markdown": map[string]string{
-			"title": title,
-			"text":  fmt.Sprintf("%s **%s**\n\n%s", levelEmoji(level), title, message),
+		"msgtype": "text",
+		"text": map[string]string{
+			"content": formatText(level, title, message),
 		},
 	}
 	s.postWebhook("dingtalk", webhook, payload)
@@ -253,10 +239,49 @@ func (s *Service) sendFeishu(webhook, level, title, message string) {
 	payload := map[string]any{
 		"msg_type": "text",
 		"content": map[string]string{
-			"text": fmt.Sprintf("%s %s\n%s", levelEmoji(level), title, message),
+			"text": formatText(level, title, message),
 		},
 	}
 	s.postWebhook("feishu", webhook, payload)
+}
+
+// formatText 组合通知正文（来自Trae）。
+// 优先保留正文自带的 ✅/❌/⚠️ 结果前缀（drama/strm 发布时已加）；
+// 仅当正文没有结果前缀时才用 levelEmoji 补一个，避免群机器人收到"✅ ✅xxx"的双 emoji。
+func formatText(level, title, message string) string {
+	title = strings.TrimSpace(title)
+	message = strings.TrimSpace(message)
+	if hasResultEmoji(message) {
+		if title == "" {
+			return message
+		}
+		if message == "" {
+			return title
+		}
+		return title + "\n" + message
+	}
+	prefix := levelEmoji(level)
+	if title == "" && message == "" {
+		return prefix
+	}
+	if title == "" {
+		return prefix + " " + message
+	}
+	if message == "" {
+		return prefix + " " + title
+	}
+	return prefix + " " + title + "\n" + message
+}
+
+// hasResultEmoji 判断消息是否已带结果类 emoji 前缀（来自Trae）
+func hasResultEmoji(s string) bool {
+	t := strings.TrimSpace(s)
+	for _, e := range []string{"✅", "❌", "⚠️", "⚠", "ℹ️", "ℹ"} {
+		if strings.HasPrefix(t, e) {
+			return true
+		}
+	}
+	return false
 }
 
 // postWebhook 统一的 HTTP POST 推送，带 10 秒超时，来自Trae
