@@ -267,6 +267,7 @@ func (s *Service) runTask(ctx context.Context, taskID int64, allowOnce bool) err
 	var treeSummary string
 	var transferCount int
 	var execLog string
+	var transferredNames []string // 重命名后的目标文件名列表，供通知格式化使用（来自Trae）
 	// 读取启用的命名正则覆盖，注入执行器（来自Trae）
 	overrides, err := s.enabledRegexOverrides(ctx)
 	if err != nil {
@@ -283,6 +284,7 @@ func (s *Service) runTask(ctx context.Context, taskID int64, allowOnce bool) err
 			return err
 		}
 		transferCount = executor.TransferCount()
+		transferredNames = executor.TransferredNames()
 		execLog = executor.Log()
 		return nil
 	})
@@ -322,7 +324,7 @@ func (s *Service) runTask(ctx context.Context, taskID int64, allowOnce bool) err
 	}
 
 	// 发送通知（来自Trae）
-	s.publishNotification(ctx, task, run.Status, transferCount, execErr)
+	s.publishNotification(ctx, task, run.Status, transferCount, transferredNames, execErr)
 
 	if execErr != nil {
 		return execErr
@@ -331,27 +333,37 @@ func (s *Service) runTask(ctx context.Context, taskID int64, allowOnce bool) err
 }
 
 // publishNotification 发布转存完成通知（来自Trae）
-// 使用独立 context，避免转存任务超时/cancel 后通知也被取消
-func (s *Service) publishNotification(_ context.Context, task *domain.DramaTask, status string, count int, execErr error) {
+// 通知格式对齐 CASX task_notify.py：标题「【智能追剧平台】」，成功时带保存路径+树形文件列表。
+// 使用独立 context，避免转存任务超时/cancel 后通知也被取消。
+func (s *Service) publishNotification(_ context.Context, task *domain.DramaTask, status string, count int, names []string, execErr error) {
 	if s.bus == nil {
 		return
 	}
 	level := "info"
-	title := "追剧转存：" + task.TaskName
+	title := "【智能追剧平台】"
 	message := ""
 	switch status {
 	case "success":
-		message = fmt.Sprintf("转存完成，共 %d 个文件", count)
+		if len(names) > 0 {
+			// 对齐 CASX: ✅《沧元图》添加追更：\n/影视资源/动漫/沧元图\n└── 🎞️沧元图 - S01E93 - 第93集.mkv
+			tree := formatFileTree(names)
+			message = fmt.Sprintf("✅《%s》添加追更：\n%s\n%s", task.TaskName, normalizeSavePath(task.SavePath), tree)
+		} else if count > 0 {
+			message = fmt.Sprintf("✅《%s》添加追更：共 %d 个文件", task.TaskName, count)
+		} else {
+			return // 无可转存文件不发通知（和 CASX 一致）
+		}
 	case "skipped":
-		level = "info"
-		message = "无可转存文件"
+		return // 跳过也不发通知（和 CASX 一致）
 	case "failed":
 		level = "error"
+		text := ""
 		if execErr != nil {
-			message = truncateMessage(execErr.Error(), 500)
+			text = truncateMessage(execErr.Error(), 500)
 		} else {
-			message = "转存失败"
+			text = "转存失败"
 		}
+		message = fmt.Sprintf("❌《%s》执行失败：\n%s", task.TaskName, text)
 	}
 	// 用 context.Background() 避免任务 ctx cancel 后通知持久化失败，来自Trae
 	s.bus.Publish(context.Background(), eventbus.NotificationCreated{
@@ -362,6 +374,42 @@ func (s *Service) publishNotification(_ context.Context, task *domain.DramaTask,
 		AccountID: task.AccountID,
 		RefID:     task.ID,
 	})
+}
+
+// formatFileTree 把文件名列表格式化为树形结构（来自Trae）。
+// 对齐 CASX format_root_file_tree: 单文件 → └── 🎞️xxx; 多文件 → ├──/└── 排列。
+func formatFileTree(names []string) string {
+	if len(names) == 0 {
+		return ""
+	}
+	if len(names) == 1 {
+		return fmt.Sprintf("└── 🎞️%s", names[0])
+	}
+	var b strings.Builder
+	for i, name := range names {
+		prefix := "└── "
+		if i < len(names)-1 {
+			prefix = "├── "
+		}
+		fmt.Fprintf(&b, "%s🎞️%s\n", prefix, name)
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// normalizeSavePath 对齐 CASX _normalize_savepath: 空串给 "/"，开头补 "/"，合并重复 "/"（来自Trae）
+func normalizeSavePath(value string) string {
+	s := strings.TrimSpace(value)
+	if s == "" {
+		return "/"
+	}
+	if !strings.HasPrefix(s, "/") {
+		s = "/" + s
+	}
+	// 合并连续的 "/"
+	for strings.Contains(s, "//") {
+		s = strings.ReplaceAll(s, "//", "/")
+	}
+	return s
 }
 
 // truncateMessage 截断消息到指定长度（来自Trae）

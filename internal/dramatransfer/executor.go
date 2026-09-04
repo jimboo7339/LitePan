@@ -57,12 +57,13 @@ func (t *treeBuilder) String() string {
 
 // DramaExecutor 追剧转存执行器，编排单次转存的完整流程（来自Trae）。
 type DramaExecutor struct {
-	drv           driver.Driver
-	st            driver.ShareTransferer
-	task          *domain.DramaTask
-	mr            *MagicRename
-	log           strings.Builder
-	transferCount int
+	drv            driver.Driver
+	st             driver.ShareTransferer
+	task           *domain.DramaTask
+	mr             *MagicRename
+	log            strings.Builder
+	transferCount  int
+	transferNames  []string // 本次转存+重命名后的目标文件名列表，供通知格式化使用（来自Trae）
 }
 
 // NewDramaExecutor 构造执行器；drv 必须实现 ShareTransferer（来自Trae）。
@@ -91,6 +92,12 @@ func (e *DramaExecutor) Log() string {
 // TransferCount 返回转存文件数（来自Trae）
 func (e *DramaExecutor) TransferCount() int {
 	return e.transferCount
+}
+
+// TransferredNames 返回本次转存+重命名后的目标文件名列表，供通知格式化使用（来自Trae）。
+// 按转存顺序排列，与 treeSummary 中的 "origin -> target" 行一一对应。
+func (e *DramaExecutor) TransferredNames() []string {
+	return e.transferNames
 }
 
 func isPermissionDenied(err error) bool {
@@ -196,6 +203,7 @@ func (e *DramaExecutor) Execute(ctx context.Context) (string, error) {
 		}
 		for i := 0; i < limit; i++ {
 			tree.add(1, fmt.Sprintf("%d. %s -> %s", i+1, plan[i].originName, plan[i].targetName))
+			e.transferNames = append(e.transferNames, plan[i].targetName)
 		}
 	}
 
