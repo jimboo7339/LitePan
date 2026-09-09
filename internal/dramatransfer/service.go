@@ -52,6 +52,9 @@ type Service struct {
 
 	runMu   sync.Mutex
 	running map[int64]struct{} // 正在执行的任务 ID 集合，防止并发重入
+
+	fireMu  sync.Mutex
+	lastFiredMin string // 上一次 cron 匹配触发的分钟点（YYYY-MM-DDTHH:MM），避免 30s 双 tick 重复触发（来自Trae）
 }
 
 const schedulerInterval = 30 * time.Second
@@ -129,29 +132,37 @@ func (s *Service) scheduleOnce(ctx context.Context) {
 	if s.settings != nil && !s.settings.Bool(settings.KeyDramaSchedulerEnabled) {
 		return
 	}
+	now := time.Now()
 	// Cron 匹配检查：只有在 cron 表达式匹配的分钟才触发，来自Trae
 	if s.settings != nil {
 		crontab := s.settings.String(settings.KeyDramaSchedulerCrontab)
-		if crontab != "" && !cronMatch(crontab, time.Now()) {
+		if crontab != "" && !cronMatch(crontab, now) {
 			return
 		}
 	}
+	// 30s tick 与 cron 分钟粒度不匹配，同一分钟内的两次 tick 只触发一次。
+	// —— 这样 "0 */2 * * *" 才能真的每 2 小时触发，而不是每天 0 点只跑一次。
+	// （来自Trae）
+	nowMin := now.Format("2006-01-02T15:04")
+	s.fireMu.Lock()
+	if s.lastFiredMin == nowMin {
+		s.fireMu.Unlock()
+		return
+	}
+	s.lastFiredMin = nowMin
+	s.fireMu.Unlock()
+
 	tasks, err := s.repo.ListActive(ctx)
 	if err != nil {
 		s.log.Warn("drama scheduler list failed", "err", err)
 		return
 	}
-	now := time.Now()
 	for _, task := range tasks {
 		if task == nil {
 			continue
 		}
 		if err := ValidateSchedule(task, false, now); err != nil {
 			continue // 不在运行星期或已过期，跳过
-		}
-		// 防止同一天重复执行：检查 last_run_at
-		if isRunToday(task.LastRunAt, now) {
-			continue
 		}
 		go s.runTaskSafe(context.WithoutCancel(ctx), task.ID, false)
 	}

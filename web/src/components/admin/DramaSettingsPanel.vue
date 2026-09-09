@@ -34,7 +34,7 @@ type DramaSettingsForm = {
   notify_failure: boolean;
 };
 
-const { settings, isDirty: settingsChanged, revert: revertSettings, snapshotBaseline } = useSettingsForm<DramaSettingsForm>({
+const { settings, isDirty: settingsChanged, isFieldChanged, revert: revertSettings, snapshotBaseline } = useSettingsForm<DramaSettingsForm>({
   default_pattern: "$TV_REGEX",
   default_replace: "",
   notify_success: true,
@@ -94,6 +94,9 @@ function loadLocalSettings() {
   } catch {
     // ignore
   }
+  // 加载完本地缓存后立刻重设基线，否则 isDirty 会把"从缓存恢复"误判成"用户改了"
+  // 导致下次打开抽屉就弹"有变动是否离开"（来自Trae）
+  snapshotBaseline();
 }
 
 function persistLocalSettings() {
@@ -207,7 +210,7 @@ defineExpose(
     </SettingsCard>
 
     <SettingsCard title="命名默认值" :accent="DRAMA_SETTINGS_ACCENT">
-      <SettingsRow :show-changed-badge="true" :changed="settings.default_pattern !== '$TV_REGEX'">
+      <SettingsRow :show-changed-badge="true" :changed="isFieldChanged('default_pattern')">
         <template #info>
           <div class="settings-row__label">
             <span>默认命名规则</span>
@@ -221,7 +224,7 @@ defineExpose(
         </template>
       </SettingsRow>
 
-      <SettingsRow :show-changed-badge="true" :changed="!!settings.default_replace">
+      <SettingsRow :show-changed-badge="true" :changed="isFieldChanged('default_replace')">
         <template #info>
           <div class="settings-row__label">
             <span>默认替换模板</span>
@@ -237,7 +240,7 @@ defineExpose(
     </SettingsCard>
 
     <SettingsCard title="通知" :accent="DRAMA_NOTIFY_ACCENT">
-      <SettingsRow :show-changed-badge="true" :changed="!settings.notify_success">
+      <SettingsRow :show-changed-badge="true" :changed="isFieldChanged('notify_success')">
         <template #info>
           <div class="settings-row__label">
             <span>转存成功通知</span>
@@ -251,7 +254,7 @@ defineExpose(
         </template>
       </SettingsRow>
 
-      <SettingsRow :show-changed-badge="true" :changed="!settings.notify_failure">
+      <SettingsRow :show-changed-badge="true" :changed="isFieldChanged('notify_failure')">
         <template #info>
           <div class="settings-row__label">
             <span>转存失败通知</span>
