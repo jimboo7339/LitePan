@@ -86,6 +86,7 @@ type branchScanState struct {
 	remoteChildren       map[string]map[string]struct{}
 	metadataDirs         map[string]metadataDirectory
 	pendingBranchDeletes []*domain.StrmBranch
+	cleanupBlockedReason string
 }
 
 func ScanTask(ctx context.Context, task *domain.StrmTask, deps ScanDeps, runMode string) (ScanResult, error) {
@@ -290,7 +291,10 @@ func finalizeScan(
 	// 小规模清理不保护（误删几十个可快速恢复）。手动执行视为用户确认，直接放行。
 	// 触发时本次所有删除动作（过期 strm/旁路/目录级/元数据）停止，生成与更新照常。
 	protectReason := ""
-	if cleanupEnabled && !deps.ManualCleanupConfirm {
+	if cleanupEnabled {
+		protectReason = strings.TrimSpace(state.cleanupBlockedReason)
+	}
+	if protectReason == "" && cleanupEnabled && !deps.ManualCleanupConfirm {
 		impact, countErr := collectCleanupImpact(root, taskRelDir, cleanupScopes, cleanupSkipped, seen, state.remoteChildren)
 		if countErr != nil {
 			return result, countErr
@@ -879,7 +883,7 @@ func isMetadataExtension(name string, metaExts map[string]struct{}) bool {
 	return ok
 }
 
-// removeStaleStrmAndSameStemSidecars 删除过期 STRM 及同主干旁路文件，不处理目录级元数据。
+// removeStaleStrmAndSameStemSidecars 删除过期 STRM 及关联文件；目录只剩通用元数据时一并清理。
 func removeStaleStrmAndSameStemSidecars(strmPath string) error {
 	if err := os.Remove(strmPath); err != nil && !os.IsNotExist(err) {
 		return err
@@ -896,15 +900,79 @@ func removeStaleStrmAndSameStemSidecars(strmPath string) error {
 	dir := filepath.Dir(strmPath)
 	names := []string{stem + ".nfo"}
 	for _, img := range []string{".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"} {
-		names = append(names, stem+img, stem+"-poster"+img, stem+"-thumb"+img)
+		for _, suffix := range []string{"", "-poster", "-thumb", "-fanart", "-backdrop", "-banner", "-landscape", "-clearlogo", "-clearart", "-logo", "-discart", "-keyart"} {
+			names = append(names, stem+suffix+img)
+		}
 	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	wanted := make(map[string]bool, len(names))
 	for _, name := range names {
+		wanted[strings.ToLower(name)] = true
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		match := wanted[strings.ToLower(name)]
+		switch strings.ToLower(filepath.Ext(name)) {
+		case ".ass", ".ssa", ".srt", ".vtt", ".sub", ".idx", ".sup", ".smi":
+			base := strings.TrimSuffix(name, filepath.Ext(name))
+			match = strings.EqualFold(base, stem) || strings.HasPrefix(strings.ToLower(base), strings.ToLower(stem)+".")
+			// 带语言标记的字幕优先归属于更长的现存媒体名，避免误删另一版本的字幕。
+			for _, other := range entries {
+				if !strings.EqualFold(filepath.Ext(other.Name()), ".strm") || other.Name() == filepath.Base(strmPath) {
+					continue
+				}
+				otherStem := strings.TrimSuffix(other.Name(), filepath.Ext(other.Name()))
+				if len(otherStem) > len(stem) && (strings.EqualFold(base, otherStem) || strings.HasPrefix(strings.ToLower(base), strings.ToLower(otherStem)+".")) {
+					match = false
+				}
+			}
+		}
+		if !match {
+			continue
+		}
 		p := filepath.Join(dir, name)
 		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
 			return err
 		}
 	}
+	entries, err = os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	// 任何其他文件或子目录都保留共用元数据，避免影响同目录的其他媒体。
+	for _, entry := range entries {
+		if entry.IsDir() || !isSharedMediaSidecar(entry.Name()) {
+			return nil
+		}
+	}
+	for _, entry := range entries {
+		if err := os.Remove(filepath.Join(dir, entry.Name())); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
 	return nil
+}
+
+func isSharedMediaSidecar(name string) bool {
+	name = strings.ToLower(name)
+	if name == "movie.nfo" || name == "tvshow.nfo" || name == "season.nfo" {
+		return true
+	}
+	ext := filepath.Ext(name)
+	switch ext {
+	case ".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif":
+		switch strings.TrimSuffix(name, ext) {
+		case "poster", "fanart", "folder", "thumb", "backdrop", "banner", "landscape", "clearlogo", "clearart", "logo", "discart", "keyart":
+			return true
+		}
+	}
+	return false
 }
 
 // cleanupScopedStaleFiles 清理过期 .strm，并顺带删除同主干旁路元数据。
