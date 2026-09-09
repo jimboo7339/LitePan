@@ -350,6 +350,15 @@ func (s *Service) publishNotification(_ context.Context, task *domain.DramaTask,
 	if s.bus == nil {
 		return
 	}
+	// 通知开关按状态分流：关闭成功/失败通知时不发对应级别（来自Trae）
+	if s.settings != nil {
+		if status == "success" && !s.settings.Bool(settings.KeyDramaNotifySuccess) {
+			return
+		}
+		if status == "failed" && !s.settings.Bool(settings.KeyDramaNotifyFailure) {
+			return
+		}
+	}
 	level := "info"
 	title := "【智能追剧平台】"
 	message := ""

@@ -86,9 +86,13 @@ const (
 	KeyMOClassificationEnabled = "mo_classification_enabled"
 	KeyMOClassificationConfig  = "mo_classification_config"
 
-	// 追剧转存全局调度配置，来自Trae
-	KeyDramaSchedulerEnabled = "drama_scheduler_enabled"
-	KeyDramaSchedulerCrontab = "drama_scheduler_crontab"
+	// 追剧转存全局配置（调度 + 默认命名 + 通知开关），来自Trae
+	KeyDramaSchedulerEnabled  = "drama_scheduler_enabled"
+	KeyDramaSchedulerCrontab  = "drama_scheduler_crontab"
+	KeyDramaDefaultPattern    = "drama_default_pattern"
+	KeyDramaDefaultReplace    = "drama_default_replace"
+	KeyDramaNotifySuccess     = "drama_notify_success"
+	KeyDramaNotifyFailure     = "drama_notify_failure"
 
 	// 通知渠道全局配置（企微/钉钉/飞书 webhook），来自Trae
 	KeyNotifyWecomWebhook    = "notify_wecom_webhook"
@@ -272,9 +276,13 @@ func defaultSpecs() []Spec {
 			Default: "",
 			Hidden:  true,
 		},
-		// 追剧转存全局调度配置，来自Trae
+		// 追剧转存全局配置（调度 + 默认命名 + 通知开关），来自Trae
 		boolSpec(KeyDramaSchedulerEnabled, "drama", "启用定时转存", "开启后按 Cron 表达式定时扫描所有已启用的转存任务，配合任务级运行星期/截止日期判断是否执行。", "true"),
 		stringSpec(KeyDramaSchedulerCrontab, "drama", "转存 Cron 表达式", "标准 5 段式 Cron（分 时 日 月 周），如「0 */2 * * *」=每 2 小时检查一次。", "0 */2 * * *"),
+		stringSpec(KeyDramaDefaultPattern, "drama", "默认命名规则", "新建转存任务时默认填入的命名规则键（如 $TV_REGEX / $TV_MAGIC / $SHOW_MAGIC / $SHOW_PRO / $BLACK_WORD）。任务详情内可单独覆盖。", "$TV_REGEX"),
+		stringSpec(KeyDramaDefaultReplace, "drama", "默认替换模板", "与默认命名规则配套的替换模板，留空表示不替换。任务详情内可单独修改。", ""),
+		boolSpec(KeyDramaNotifySuccess, "drama", "转存成功通知", "定时或手动转存成功后，是否通过已配置的 webhook 渠道推送通知。", "true"),
+		boolSpec(KeyDramaNotifyFailure, "drama", "转存失败通知", "定时或手动转存失败后，是否通过已配置的 webhook 渠道推送通知。", "true"),
 		// 通知渠道全局配置（企微/钉钉/飞书 webhook），来自Trae
 		// 留空表示不启用该渠道；转存任务和 STRM 任务执行完成后会自动调用已配置的渠道推送通知。
 		stringSpec(KeyNotifyWecomWebhook, "notification", "企业微信机器人 Webhook", "企业微信群机器人 Webhook 地址，格式：https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx。留空表示不启用。", ""),
