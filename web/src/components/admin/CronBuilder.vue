@@ -46,7 +46,6 @@ function parseExpression(expr: string) {
     presetIndex.value = PRESETS.findIndex((p) => p.value === expr);
     return;
   }
-  const [min, hr, , , week] = parts;
 
   // 反查是否命中某个预设：命中则原样展示，避免被 UI 二次改写
   const presetHit = PRESETS.findIndex((p) => p.value === expr);
@@ -58,7 +57,7 @@ function parseExpression(expr: string) {
     return;
   }
 
-  // 非预设：拆解分钟/时/星期字段，选合适模式
+  // 非预设：拆解分钟/时/星期字段，选合适模式（来自Trae）
   syncFromExpression(expr);
   if (weekDays.value.length > 0) {
     mode.value = "weekly";
