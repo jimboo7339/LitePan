@@ -1,21 +1,21 @@
 <script setup lang="ts">
 // Cron 表达式可视化构建器（来自Trae）
-// 用户不必去在线网站配置后复制，直接选预设 / 勾星期 / 改时点即可实时生成表达式
+// 定位：控制"任务扫描频率"——多久扫一次任务列表；
+// 具体某个任务这次扫描要不要跑，由任务级"运行星期"决定。
 import { computed, ref, watch } from "vue";
 import AppInput from "@/components/base/AppInput.vue";
 
-// 常见预设，覆盖 80% 日常使用场景（来自Trae）
+// 常见扫描频率预设（来自Trae），按频率语义排列：越快越靠上。
 const PRESETS = [
+  { label: "每 15 分钟一次", value: "*/15 * * * *" },
   { label: "每 30 分钟一次", value: "*/30 * * * *" },
   { label: "每 1 小时一次", value: "0 */1 * * *" },
   { label: "每 2 小时一次", value: "0 */2 * * *" },
+  { label: "每 4 小时一次", value: "0 */4 * * *" },
   { label: "每 6 小时一次", value: "0 */6 * * *" },
-  { label: "每天 08:00 执行", value: "0 8 * * *" },
-  { label: "每天 08:00 和 20:00 各一次", value: "0 8,20 * * *" },
-  { label: "工作日 08:00（周一到周五）", value: "0 8 * * 1-5" },
-  { label: "周末 08:00（周六周日）", value: "0 8 * * 6,7" },
-  { label: "每周一 08:00 执行", value: "0 8 * * 1" },
-  { label: "每天 00:00 执行", value: "0 0 * * *" },
+  { label: "每天 00:00 扫描一次", value: "0 0 * * *" },
+  { label: "每天 08:00 扫描一次", value: "0 8 * * *" },
+  { label: "每天 08:00 和 20:00 各扫一次", value: "0 8,20 * * *" },
 ];
 
 // 星期选项：ISO 语义 1=周一…7=周日（来自Trae）
@@ -29,7 +29,7 @@ const WEEK_OPTIONS = [
   { value: 7, label: "周日" },
 ];
 
-const model = defineModel<string>({ required: true, default: "0 */2 * * *" });
+const model = defineModel<string>({ required: true, default: "*/30 * * * *" });
 
 // 三种模式：直接展示预设原文；"每天 HH:MM"；"每天 HH:MM 只在勾选的星期"（来自Trae）
 type Mode = "preset" | "daily" | "weekly";
@@ -207,7 +207,8 @@ function onMinuteChange(raw: string | number | boolean) {
       </div>
     </div>
 
-    <!-- 星期多选（来自Trae） -->
+    <!-- 星期多选（来自Trae）：默认不勾，让 Cron 主要表达"扫描频率"；
+         如需限制扫描到某几天，可以手动勾选 -->
     <div class="cron-builder__row">
       <span class="cron-builder__label">星期</span>
       <div class="cron-builder__week">
@@ -220,7 +221,7 @@ function onMinuteChange(raw: string | number | boolean) {
           <input type="checkbox" :checked="weekDays.includes(w.value)" @change="toggleWeekDay(w.value)" />
           <span>{{ w.label }}</span>
         </label>
-        <span class="cron-builder__week-hint" v-if="weekDays.length === 0">不选 = 每天</span>
+        <span class="cron-builder__week-hint" v-if="weekDays.length === 0">不选 = 每天扫描；单个任务只在特定周几跑请到任务里勾"运行星期"</span>
       </div>
     </div>
 

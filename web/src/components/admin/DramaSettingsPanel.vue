@@ -48,7 +48,7 @@ const BOOL_FIELDS: FieldKey[] = ["scheduler_enabled", "notify_success", "notify_
 // 后端未命中该 key 时的兜底默认值，与 registry.go 保持一致（来自Trae）
 const FALLBACK_DEFAULTS: Record<string, string> = {
   drama_scheduler_enabled: "true",
-  drama_scheduler_crontab: "0 */2 * * *",
+  drama_scheduler_crontab: "*/30 * * * *",
   drama_default_pattern: "$TV_REGEX",
   drama_default_replace: "",
   drama_notify_success: "true",
@@ -71,7 +71,7 @@ const {
   revert: revertSettings,
 } = useSettingsForm<DramaSettingsForm>({
   scheduler_enabled: true,
-  scheduler_crontab: "0 */2 * * *",
+  scheduler_crontab: "*/30 * * * *",
   default_pattern: "$TV_REGEX",
   default_replace: "",
   notify_success: true,
@@ -175,17 +175,19 @@ defineExpose(
       <SettingsRow :show-changed-badge="true" :changed="isFieldChanged('scheduler_crontab')">
         <template #info>
           <div class="settings-row__label">
-            <span>Cron 表达式</span>
-            <SettingsHelpTooltip title="Cron 表达式说明">
-              <p>标准 5 段式 Cron：<code>分 时 日 月 周</code>。这是全局唯一调度开关，任务级不再单独设置运行星期。</p>
-              <p>常用示例：</p>
+            <span>任务扫描频率（Cron 表达式）</span>
+            <SettingsHelpTooltip title="扫描频率 Cron 说明">
+              <p>标准 5 段式 Cron：<code>分 时 日 月 周</code>。决定全局多久扫一次任务列表。</p>
+              <p>每个任务本次扫描要不要跑，由任务编辑抽屉里的「运行星期」决定——两个闸门叠加：</p>
+              <p>全局 Cron 命中 <b>且</b> 任务未过期 <b>且</b>（任务运行星期为空 <b>或</b> 命中今天周几）= 执行</p>
+              <p>常用扫描频率示例：</p>
               <ul>
-                <li><code>0 */2 * * *</code> = 每天整点每 2 小时检查一次</li>
-                <li><code>0 8 * * *</code> = 每天 8:00 执行</li>
-                <li><code>0 8 * * 1-5</code> = 工作日 8:00 执行</li>
-                <li><code>0 8 * * 2,4</code> = 每周二/四 8:00 执行</li>
+                <li><code>*/30 * * * *</code> = 每 30 分钟扫一次（默认，及时性好）</li>
+                <li><code>0 */2 * * *</code> = 每 2 小时扫一次</li>
+                <li><code>0 */6 * * *</code> = 每 6 小时扫一次（省资源）</li>
+                <li><code>0 8 * * *</code> = 每天 8:00 扫一次</li>
               </ul>
-              <p>调度器每 30 秒 tick 一次，只有在 Cron 匹配的分钟才会触发任务扫描。</p>
+              <p>调度器每 30 秒 tick 一次，只有在 Cron 匹配的分钟才会进入任务列表判定。</p>
             </SettingsHelpTooltip>
           </div>
         </template>
