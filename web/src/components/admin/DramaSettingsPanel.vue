@@ -10,6 +10,7 @@ import SettingsCard from "@/components/admin/SettingsCard.vue";
 import SettingsRow from "@/components/admin/SettingsRow.vue";
 import SettingsHelpTooltip from "@/components/admin/SettingsHelpTooltip.vue";
 import { fetchSettings, saveSettings, type SettingItem } from "@/api/settings";
+import CronBuilder from "@/components/admin/CronBuilder.vue";
 import { bindSettingsPanelExpose, useSettingsForm } from "@/composables/useSettingsForm";
 import { toast } from "@/composables/useToast";
 import "@/styles/admin-shared.css";
@@ -176,20 +177,20 @@ defineExpose(
           <div class="settings-row__label">
             <span>Cron 表达式</span>
             <SettingsHelpTooltip title="Cron 表达式说明">
-              <p>标准 5 段式 Cron：<code>分 时 日 月 周</code></p>
+              <p>标准 5 段式 Cron：<code>分 时 日 月 周</code>。这是全局唯一调度开关，任务级不再单独设置运行星期。</p>
               <p>常用示例：</p>
               <ul>
-                <li><code>0 */2 * * *</code> = 每 2 小时检查一次</li>
+                <li><code>0 */2 * * *</code> = 每天整点每 2 小时检查一次</li>
                 <li><code>0 8 * * *</code> = 每天 8:00 执行</li>
-                <li><code>0 8,20 * * *</code> = 每天 8:00 和 20:00 各执行一次</li>
-                <li><code>*/30 * * * *</code> = 每 30 分钟检查一次</li>
+                <li><code>0 8 * * 1-5</code> = 工作日 8:00 执行</li>
+                <li><code>0 8 * * 2,4</code> = 每周二/四 8:00 执行</li>
               </ul>
               <p>调度器每 30 秒 tick 一次，只有在 Cron 匹配的分钟才会触发任务扫描。</p>
             </SettingsHelpTooltip>
           </div>
         </template>
         <template #control>
-          <AppInput v-model="settings.scheduler_crontab" placeholder="0 */2 * * *" />
+          <CronBuilder v-model="settings.scheduler_crontab" />
         </template>
       </SettingsRow>
     </SettingsCard>

@@ -13,7 +13,7 @@ export interface DramaTask {
   pattern: string;
   replace: string;
   ignore_extension: boolean;
-  run_week: string; // 逗号分隔的 1-7
+  run_week?: string; // 已废弃：调度统一由全局 Cron 决定；仅保留后端字段兼容（来自Trae）
   end_date: string; // YYYY-MM-DD
   update_subdir: string;
   update_subdir_resave_mode: string;
@@ -37,7 +37,7 @@ export interface DramaTaskInput {
   pattern: string;
   replace: string;
   ignore_extension: boolean;
-  run_week: string;
+  run_week?: string; // 已废弃：任务级调度已由全局 Cron 接管；保留可选字段仅为向后兼容旧客户端（来自Trae）
   end_date: string;
   update_subdir: string;
   update_subdir_resave_mode: string;
