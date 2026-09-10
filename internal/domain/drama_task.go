@@ -16,7 +16,7 @@ type DramaTask struct {
 	Pattern                 string
 	Replace                 string
 	IgnoreExtension         bool
-	RunWeek                 string // 逗号分隔的 1-7
+	RunWeek                 string // 已废弃：调度统一由全局 Cron 决定，仅保留字段兼容旧库（来自Trae）
 	EndDate                 string // YYYY-MM-DD
 	UpdateSubdir            string
 	UpdateSubdirResaveMode  string
