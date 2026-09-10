@@ -47,6 +47,18 @@ const BUILTIN_PATTERNS = [
   { key: "$BLACK_WORD", label: "黑名单过滤（剔除广告/预告）" },
 ];
 
+// 周几选项（来自Trae），ISO 1-7 与后端 ValidateSchedule 判定保持一致。
+// 任务级"运行星期"是任务过滤器：全局 Cron 决定何时扫，勾选的周几决定这次扫要跑哪些任务。
+const WEEK_OPTIONS = [
+  { value: "1", label: "周一" },
+  { value: "2", label: "周二" },
+  { value: "3", label: "周三" },
+  { value: "4", label: "周四" },
+  { value: "5", label: "周五" },
+  { value: "6", label: "周六" },
+  { value: "7", label: "周日" },
+];
+
 const accountsStore = useAccountsStore();
 const { accounts } = storeToRefs(accountsStore);
 const activeAccounts = computed(() => accounts.value.filter((a) => a.is_active));
@@ -163,6 +175,7 @@ const emptyForm = (): DramaTaskInput => ({
   pattern: "$TV_REGEX",
   replace: "",
   ignore_extension: false,
+  run_week: "",
   end_date: "",
   update_subdir: "",
   update_subdir_resave_mode: "none",
@@ -171,6 +184,8 @@ const emptyForm = (): DramaTaskInput => ({
   status: "running",
 });
 const form = reactive<DramaTaskInput>(emptyForm());
+// 运行星期多选（来自Trae）：数组形式，提交时按 ISO 1-7 拼成逗号分隔字符串；空数组 = 每天都能跑。
+const weekSelection = ref<string[]>([]);
 // 排序基数输入代理（来自Trae）：AppInput 始终 emit 字符串，
 // 这里在表单态里保持 number，提交时不会被误写成字符串。
 const sortIndexText = computed({
@@ -184,6 +199,7 @@ const sortIndexText = computed({
 function openCreate() {
   editingId.value = null;
   Object.assign(form, emptyForm());
+  weekSelection.value = [];
   drawerOpen.value = true;
 }
 
@@ -197,6 +213,7 @@ function openEdit(task: DramaTask) {
     pattern: task.pattern,
     replace: task.replace,
     ignore_extension: task.ignore_extension,
+    run_week: task.run_week ?? "",
     end_date: task.end_date,
     update_subdir: task.update_subdir,
     update_subdir_resave_mode: task.update_subdir_resave_mode,
@@ -204,6 +221,10 @@ function openEdit(task: DramaTask) {
     sort_index: task.sort_index,
     status: task.status,
   });
+  weekSelection.value = (task.run_week ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => WEEK_OPTIONS.some((w) => w.value === s));
   drawerOpen.value = true;
 }
 
@@ -225,6 +246,7 @@ async function submitTask(): Promise<number | null> {
     ...form,
     task_name: form.task_name.trim(),
     share_url: form.share_url.trim(),
+    run_week: weekSelection.value.join(","),
   };
   submitting.value = true;
   try {
@@ -278,6 +300,7 @@ async function toggleTask(task: DramaTask, enabled: boolean) {
       pattern: task.pattern,
       replace: task.replace,
       ignore_extension: task.ignore_extension,
+      run_week: task.run_week ?? "",
       end_date: task.end_date,
       update_subdir: task.update_subdir,
       update_subdir_resave_mode: task.update_subdir_resave_mode,
@@ -473,6 +496,12 @@ watch(
                   <AdminStatusPill :tone="task.status === 'running' ? 'success' : 'muted'">
                     {{ task.status === "running" ? "启用" : "停用" }}
                   </AdminStatusPill>
+                  <span v-if="task.run_week" class="drama-desc__week" :title="'仅在这些周几执行（配合全局扫描频率）'">
+                    周{{ task.run_week.split(",").join("、") }}
+                  </span>
+                  <span v-else class="drama-desc__week" :title="'未勾选周几，每次扫描都会尝试执行'">
+                    每日
+                  </span>
                 </div>
               </td>
               <td class="drama-account">{{ accountName(task.account_id) }}</td>
@@ -622,10 +651,23 @@ watch(
           <FormField label="截止日期（YYYY-MM-DD）">
             <AppInput v-model="form.end_date" placeholder="例如：2099-12-31" />
           </FormField>
-          <div class="drama-schedule-hint">
-            调度时间由全局 Cron 统一控制，任务级不再单独设置"运行星期"，
-            请前往「转存设置」面板使用可视化 Cron 构建器修改全局表达式。
-          </div>
+          <FormField label="运行星期">
+            <div class="drama-week">
+              <label v-for="w in WEEK_OPTIONS" :key="w.value" class="drama-week__item">
+                <input
+                  v-model="weekSelection"
+                  type="checkbox"
+                  :value="w.value"
+                  class="drama-week__checkbox"
+                />
+                <span>{{ w.label }}</span>
+              </label>
+              <div class="drama-week__hint">
+                留空表示每天都能跑；勾选后仅在这些周几执行。
+                实际扫描频率由「转存设置」的全局 Cron 表达式决定。
+              </div>
+            </div>
+          </FormField>
         </div>
       </div>
 
@@ -899,15 +941,42 @@ watch(
   color: var(--text-regular);
 }
 
-/* 任务级不再控制调度：仅保留提示，指向全局 Cron 面板（来自Trae） */
-.drama-schedule-hint {
+/* 任务级运行星期选择（来自Trae）：checkbox 组 + 空态提示 */
+.drama-desc__week {
+  color: var(--text-muted);
+  font-size: 12px;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-elevated);
+}
+
+.drama-week {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 4px 0;
+}
+
+.drama-week__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--text-regular);
+  cursor: pointer;
+}
+
+.drama-week__checkbox {
+  accent-color: var(--brand);
+}
+
+.drama-week__hint {
+  flex: 1 0 100%;
   font-size: 12px;
   color: var(--text-muted);
   line-height: 1.5;
-  padding: 8px 10px;
-  border: 1px dashed var(--border);
-  border-radius: var(--radius);
-  background: var(--bg-elevated);
 }
 
 /* 运行记录抽屉（来自Trae，风格同 AutomationPanel） */

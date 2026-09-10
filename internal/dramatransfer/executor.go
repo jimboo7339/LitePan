@@ -774,8 +774,8 @@ func normalizeName(name string, ignoreExtension bool) string {
 	return n
 }
 
-// ValidateSchedule 校验调度条件（仅截止日期），不满足返回 ErrSkipTask（来自Trae）
-// 任务级"运行星期"已由全局 Cron 表达式统一表达，此处不再重复判定 RunWeek。
+// ValidateSchedule 校验调度条件（截止日期 + 任务级运行星期），不满足返回 ErrSkipTask（来自Trae）
+// 全局 Cron 只负责决定何时进入判定，任务级 RunWeek 决定这次扫描当前任务是否执行。
 func ValidateSchedule(task *domain.DramaTask, allowOnce bool, now time.Time) error {
 	// 截止日期（来自Trae）
 	if task.EndDate != "" {
@@ -784,6 +784,21 @@ func ValidateSchedule(task *domain.DramaTask, allowOnce bool, now time.Time) err
 				return ErrSkipTask
 			}
 		}
+	}
+	// 任务级"运行星期"过滤（来自Trae）：留空视为每天都能跑，
+	// 只有明确勾选周几时才按 ISO 1-7（1=周一…7=周日）过滤。
+	if strings.TrimSpace(task.RunWeek) != "" {
+		isoWeekday := int(now.Weekday()) // Go: 0=Sun
+		if isoWeekday == 0 {
+			isoWeekday = 7
+		}
+		target := fmt.Sprintf("%d", isoWeekday)
+		for _, s := range strings.Split(task.RunWeek, ",") {
+			if strings.TrimSpace(s) == target {
+				return nil
+			}
+		}
+		return ErrSkipTask
 	}
 	return nil
 }
