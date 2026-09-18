@@ -74,7 +74,7 @@ const MediaOrganizePanel = defineAsyncComponent(() => import("@/components/admin
 const MediaOrganizeSettings = defineAsyncComponent(() => import("@/components/admin/MediaOrganizeSettings.vue"));
 import CacheSignalBand from "@/components/admin/CacheSignalBand.vue";
 const DramaSettingsPanel = defineAsyncComponent(() => import("@/components/admin/DramaSettingsPanel.vue"));
-import CacheRuntimeStats from "@/components/admin/CacheRuntimeStats.vue";
+import type { AdminTaskTabStat } from "@/components/admin/adminTaskTabHeader";
 import AdminSettingsDrawer from "@/components/admin/AdminSettingsDrawer.vue";
 import DramaTransferPanel from "@/components/admin/DramaTransferPanel.vue";
 import { useAccountPathLabel } from "@/composables/useAccountPathLabel";

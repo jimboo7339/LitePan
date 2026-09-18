@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"litepan/internal/domain"
@@ -27,6 +28,12 @@ type Service struct {
 	accounts domain.AccountRepository
 	settings *settings.Service
 	log      *slog.Logger
+
+	// subs 是未读数订阅者（前端 SSE 长连接）。每个通道带 1 个缓冲，
+	// 推送采用非阻塞写：慢客户端只保留最新值，不会拖住发布方。
+	subMu   sync.Mutex
+	subs    map[int64]chan int
+	nextSub int64
 }
 
 func NewService(opts Options) *Service {
@@ -34,7 +41,64 @@ func NewService(opts Options) *Service {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Service{repo: opts.Repo, accounts: opts.Accounts, settings: opts.Settings, log: log}
+	return &Service{repo: opts.Repo, accounts: opts.Accounts, settings: opts.Settings, log: log, subs: map[int64]chan int{}}
+}
+
+// Subscribe 订阅未读数变化，返回只读通道和退订函数；退订可重复调用。
+func (s *Service) Subscribe() (<-chan int, func()) {
+	if s == nil {
+		closed := make(chan int)
+		close(closed)
+		return closed, func() {}
+	}
+	ch := make(chan int, 1)
+	s.subMu.Lock()
+	id := s.nextSub
+	s.nextSub++
+	s.subs[id] = ch
+	s.subMu.Unlock()
+
+	var once sync.Once
+	return ch, func() {
+		once.Do(func() {
+			s.subMu.Lock()
+			if current, ok := s.subs[id]; ok {
+				delete(s.subs, id)
+				close(current)
+			}
+			s.subMu.Unlock()
+		})
+	}
+}
+
+// publishUnread 重算未读数并推给所有订阅者。通知已落库后才调用，因此用独立上下文，
+// 避免发布方请求结束时上下文已取消导致推送丢失。
+func (s *Service) publishUnread() {
+	if s == nil || s.repo == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	count, err := s.repo.UnreadCount(ctx)
+	if err != nil {
+		return
+	}
+	s.subMu.Lock()
+	defer s.subMu.Unlock()
+	for _, ch := range s.subs {
+		select {
+		case ch <- count:
+		default:
+			select {
+			case <-ch:
+			default:
+			}
+			select {
+			case ch <- count:
+			default:
+			}
+		}
+	}
 }
 
 func (s *Service) Register(bus *eventbus.Bus) {
@@ -64,35 +128,58 @@ func (s *Service) MarkRead(ctx context.Context, id int64) error {
 	if s.repo == nil {
 		return domain.Errorf(domain.CodeInternal, "通知仓储未就绪")
 	}
-	return s.repo.MarkRead(ctx, id)
+	if err := s.repo.MarkRead(ctx, id); err != nil {
+		return err
+	}
+	s.publishUnread()
+	return nil
 }
 
 func (s *Service) MarkAllRead(ctx context.Context) (int64, error) {
 	if s.repo == nil {
 		return 0, domain.Errorf(domain.CodeInternal, "通知仓储未就绪")
 	}
-	return s.repo.MarkAllRead(ctx)
+	n, err := s.repo.MarkAllRead(ctx)
+	if err != nil {
+		return 0, err
+	}
+	s.publishUnread()
+	return n, nil
 }
 
 func (s *Service) Delete(ctx context.Context, id int64) error {
 	if s.repo == nil {
 		return domain.Errorf(domain.CodeInternal, "通知仓储未就绪")
 	}
-	return s.repo.Delete(ctx, id)
+	if err := s.repo.Delete(ctx, id); err != nil {
+		return err
+	}
+	s.publishUnread()
+	return nil
 }
 
 func (s *Service) DeleteAll(ctx context.Context) (int64, error) {
 	if s.repo == nil {
 		return 0, domain.Errorf(domain.CodeInternal, "通知仓储未就绪")
 	}
-	return s.repo.DeleteAll(ctx)
+	n, err := s.repo.DeleteAll(ctx)
+	if err != nil {
+		return 0, err
+	}
+	s.publishUnread()
+	return n, nil
 }
 
 func (s *Service) DeleteByRef(ctx context.Context, category string, refID int64) (int64, error) {
 	if s.repo == nil {
 		return 0, domain.Errorf(domain.CodeInternal, "通知仓储未就绪")
 	}
-	return s.repo.DeleteByRef(ctx, category, refID)
+	n, err := s.repo.DeleteByRef(ctx, category, refID)
+	if err != nil {
+		return 0, err
+	}
+	s.publishUnread()
+	return n, nil
 }
 
 func (s *Service) Notify(ctx context.Context, level, category, title, message string, accountID, refID int64) {
@@ -147,7 +234,10 @@ func (s *Service) persist(ctx context.Context, level, category, title, message s
 	})
 	if err != nil {
 		s.log.Warn("persist notification failed", "title", title, "err", err)
+		return
 	}
+	// 新通知落库成功即推送一次未读数，前端铃铛无需再靠轮询发现。
+	s.publishUnread()
 	// 推送到已配置的外部通知渠道（企微/钉钉/飞书），来自Trae
 	// 仅对任务执行类通知转发，避免认证类通知刷屏；使用独立 context 避免任务 cancel 影响推送
 	s.sendWebhook(level, category, title, message)
