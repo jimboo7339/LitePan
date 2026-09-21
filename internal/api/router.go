@@ -140,6 +140,7 @@ type Handler struct {
 
 	devMu       sync.Mutex
 	devUnlocked bool
+	slowLogs    slowRequestLogs
 }
 
 // NewRouter 装配并返回 HTTP 路由（含内嵌管理页面）。
@@ -261,6 +262,9 @@ func NewRouter(d Deps) http.Handler {
 				r.Get("/fnos/config", h.getFnosConfig)
 				r.Put("/fnos/config", h.updateFnosConfig)
 				r.Post("/fnos/test", h.testFnosConfig)
+				r.Put("/fnos/management", h.updateFnosManagement)
+				r.Post("/fnos/management/test", h.testFnosManagement)
+				r.Get("/fnos/libraries", h.listFnosLibraries)
 				r.Get("/local-fs/browse", h.browseLocalFS)
 				r.Get("/drivers", h.listDrivers)
 				r.Get("/dev/state", h.getDevState)
