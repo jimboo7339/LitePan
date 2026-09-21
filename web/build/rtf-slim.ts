@@ -3,9 +3,15 @@ import { createRequire } from "node:module";
 import { fileURLToPath, URL } from "node:url";
 import type { Plugin } from "vite";
 
-const RTF_SRC = fileURLToPath(new URL("../node_modules/rtf.js/src/", import.meta.url));
-const SHIM = fileURLToPath(new URL("./codepage-shim.ts", import.meta.url));
+const RTF_SRC = normalizePath(fileURLToPath(new URL("../node_modules/rtf.js/src/", import.meta.url)));
+const SHIM = normalizePath(fileURLToPath(new URL("./codepage-shim.ts", import.meta.url)));
 const LEGACY_TABLE_MARKER = '"__RTF_LEGACY_CODEPAGES__"';
+
+// Windows 下 fileURLToPath 返回反斜杠路径，而 rolldown 的模块 id 统一用正斜杠，
+// 直接 startsWith 会匹配失败导致 type 补丁失效（来自Trae）
+function normalizePath(p: string): string {
+  return p.replace(/\\/g, "/");
+}
 
 function legacyCodepageTables(): string {
   const cptable = createRequire(import.meta.url)("codepage") as Record<string, { dec?: (string | undefined)[] }>;
