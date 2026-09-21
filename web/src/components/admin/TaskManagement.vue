@@ -662,7 +662,7 @@ async function loadStartupRemaining() {
 }
 
 async function refreshAll() {
-  await Promise.all([loadTasks(), loadDramaTasks(), accountsStore.loadAccounts(), loadStrmSettingsSummary()]);
+  await Promise.all([loadTasks(), loadDramaTasks(), accountsStore.loadAccounts()]);
 }
 
 function resetForm() {
