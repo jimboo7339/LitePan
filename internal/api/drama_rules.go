@@ -6,12 +6,24 @@ package api
 
 import (
 	"net/http"
+	"net/url"
 
 	"github.com/go-chi/chi/v5"
 
 	"litepan/internal/domain"
 	"litepan/internal/dramatransfer"
 )
+
+// pathKeyParam 取出路径参数并做 URL 解码（来自Trae）。
+// chi v5 的 URLParam 返回原始（未解码）字符串，规则 key 形如 $SHOW_MAGIC
+// 会被前端编码为 %24SHOW_MAGIC，不解码就会撞上前缀 $ 的校验。
+func pathKeyParam(r *http.Request, name string) string {
+	raw := chi.URLParam(r, name)
+	if dec, err := url.PathUnescape(raw); err == nil {
+		return dec
+	}
+	return raw
+}
 
 // magicRegexRuleDTO 规则响应结构（来自Trae）
 type magicRegexRuleDTO struct {
@@ -69,7 +81,7 @@ func (h *Handler) upsertMagicRegexRule(w http.ResponseWriter, r *http.Request) {
 	if !ensureServiceReady(w, h.drama != nil) {
 		return
 	}
-	key := chi.URLParam(r, "key")
+	key := pathKeyParam(r, "key")
 	var in magicRegexRuleInput
 	if err := decodeJSON(r, &in); err != nil {
 		writeErr(w, err)
@@ -106,7 +118,7 @@ func (h *Handler) deleteMagicRegexRule(w http.ResponseWriter, r *http.Request) {
 	if !ensureServiceReady(w, h.drama != nil) {
 		return
 	}
-	key := chi.URLParam(r, "key")
+	key := pathKeyParam(r, "key")
 	if err := h.drama.DeleteRule(r.Context(), key); err != nil {
 		writeErr(w, err)
 		return
