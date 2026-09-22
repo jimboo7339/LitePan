@@ -6,6 +6,8 @@ package guangya
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -125,6 +127,8 @@ var (
 
 // publicPostShare 是光鸭分享接口的匿名访问通道（来自Trae）。
 // 与 d.apiRequest 不同：不带 Authorization、走公共 did/dt 头。
+// 关键：每次调用都会重新生成 did + traceparent（对齐 CASX _public_headers），
+// 因为广鸭服务端按 did 建立会话，固定 did 会导致分页请求被视为同一会话而忽略 page 参数。
 func (d *Driver) publicPostShare(ctx context.Context, path string, body map[string]any, out any) error {
 	if err := d.waitOperationDelay(ctx); err != nil {
 		return err
@@ -133,7 +137,7 @@ func (d *Driver) publicPostShare(ctx context.Context, path string, body map[stri
 	if err != nil {
 		return domain.Wrap(domain.CodeInternal, err)
 	}
-	httpx.SetHeaders(req, d.buildPublicShareHeaders())
+	httpx.SetHeaders(req, buildPublicShareHeadersFresh())
 
 	resp, data, err := httpx.Execute(d.client, req, httpx.DefaultReadLimit)
 	if err != nil {
@@ -157,17 +161,52 @@ func (d *Driver) publicPostShare(ctx context.Context, path string, body map[stri
 	return nil
 }
 
-// buildPublicShareHeaders 光鸭分享接口的公共请求头（来自Trae）
-func (d *Driver) buildPublicShareHeaders() map[string]string {
+// buildPublicShareHeadersFresh 光鸭分享接口的公共请求头（来自Trae）
+// 每次调用都重新生成 did 和 traceparent，与 CASX _public_headers 对齐。
+// 固定 did 会让广鸭服务端把分页请求识别成同一会话，从而忽略 page 参数，
+// 导致 ListShareItems 只能拉到第一页（50 条），后续页返回的仍是首页数据。
+func buildPublicShareHeadersFresh() map[string]string {
 	return map[string]string{
 		"Accept":       "application/json, text/plain, */*",
 		"Content-Type": "application/json",
-		"did":          d.deviceID(),
+		"did":          generateDid(),
 		"dt":           "4",
+		"traceparent":  generateTraceparent(),
 		"Origin":       webBaseURL,
 		"Referer":      webBaseURL + "/",
 		"User-Agent":   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
 	}
+}
+
+// generateDid 生成 32 位随机 hex（来自Trae），对齐 CASX generate_did。
+func generateDid() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		// 兜底：极端情况下用 nanosecond + counter 拼接成 32 hex
+		now := time.Now().UnixNano()
+		buf := make([]byte, 16)
+		for i := 0; i < 16; i++ {
+			buf[i] = byte((now >> (i % 8)) & 0xff)
+		}
+		return hex.EncodeToString(buf)
+	}
+	return hex.EncodeToString(b)
+}
+
+// generateTraceparent 生成 W3C traceparent（来自Trae），格式 00-{32hex}-{16hex}-01。
+// 对齐 CASX generate_traceparent：`00-{token_hex(16)}-{token_hex(8)}-01`。
+func generateTraceparent() string {
+	trace := make([]byte, 16)
+	span := make([]byte, 8)
+	if _, err := rand.Read(trace); err != nil {
+		now := time.Now().UnixNano()
+		return fmt.Sprintf("00-%032x-%016x-01", now, now)
+	}
+	if _, err := rand.Read(span); err != nil {
+		now := time.Now().UnixNano()
+		return fmt.Sprintf("00-%s-%08x-01", hex.EncodeToString(trace), now%65536)
+	}
+	return fmt.Sprintf("00-%s-%s-01", hex.EncodeToString(trace), hex.EncodeToString(span))
 }
 
 // ExtractShareURL 解析光鸭分享链接（来自Trae）
