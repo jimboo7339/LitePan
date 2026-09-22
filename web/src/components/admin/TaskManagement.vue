@@ -72,8 +72,8 @@ const AutomationPanel = defineAsyncComponent(() => import("@/components/admin/Au
 const MediaOrganizePanel = defineAsyncComponent(() => import("@/components/admin/MediaOrganizePanel.vue"));
 const MediaOrganizeSettings = defineAsyncComponent(() => import("@/components/admin/MediaOrganizeSettings.vue"));
 import CacheSignalBand from "@/components/admin/CacheSignalBand.vue";
+import DramaSignalBand from "@/components/admin/DramaSignalBand.vue";
 const DramaSettingsPanel = defineAsyncComponent(() => import("@/components/admin/DramaSettingsPanel.vue"));
-import type { AdminTaskTabStat } from "@/components/admin/adminTaskTabHeader";
 import AdminSettingsDrawer from "@/components/admin/AdminSettingsDrawer.vue";
 import DramaTransferPanel from "@/components/admin/DramaTransferPanel.vue";
 import { useAccountPathLabel } from "@/composables/useAccountPathLabel";
@@ -152,13 +152,8 @@ const { remainingDisplay: startupRemainingDisplay, applyStartupRemaining } = use
 const dramaTasks = ref<DramaTask[]>([]);
 const dramaLoading = ref(false);
 const dramaListReady = ref(false);
-const dramaEnabledCount = computed(() => dramaTasks.value.filter((t) => t.status === "running").length);
-const dramaErrorCount = computed(() => dramaTasks.value.filter((t) => t.status === "error").length);
-const dramaTabStats = computed<AdminTaskTabStat[]>(() => [
-  { icon: "fa-list", value: dramaTasks.value.length, label: "任务总数", tone: "blue" },
-  { icon: "fa-play", value: dramaEnabledCount.value, label: "已启用", tone: "purple" },
-  { icon: "fa-pause", value: dramaErrorCount.value, label: "异常", tone: "amber" },
-]);
+// 转存任务仪表带自身从后端加载设置摘要（来自Trae）
+const dramaBandRef = ref<InstanceType<typeof DramaSignalBand> | null>(null);
 
 const strmPanelDirty = ref(false);
 const cachePanelDirty = ref(false);
@@ -477,6 +472,7 @@ async function closeSettingsDrawer() {
   settingsDrawerOpen.value = false;
   if (drawerKind.value === "cache") void cacheBandRef.value?.reloadSettings?.();
   if (drawerKind.value === "organize") void organizeBandRef.value?.reloadSettings?.();
+  if (drawerKind.value === "drama") void dramaBandRef.value?.reloadSettings?.();
 }
 
 async function handleDrawerSave() {
@@ -487,6 +483,7 @@ async function handleDrawerSave() {
   else await strmSettingsRef.value?.save?.();
   if (drawerKind.value === "cache") void cacheBandRef.value?.reloadSettings?.();
   if (drawerKind.value === "organize") void organizeBandRef.value?.reloadSettings?.();
+  if (drawerKind.value === "drama") void dramaBandRef.value?.reloadSettings?.();
 }
 
 const { timeWindowDisplay, timePickerMode, onTimeWheelConfirm } = useTimeWindowSchedule(form, {
@@ -650,6 +647,11 @@ async function loadDramaTasks(quiet = false) {
     if (!quiet) dramaLoading.value = false;
     dramaListReady.value = true;
   }
+}
+
+// 转存任务仪表带「刷新」按钮专用：走非静默加载以触发 loading 反馈（来自Trae）
+async function refreshDramaTasksFromBand() {
+  await loadDramaTasks(false);
 }
 
 async function loadStartupRemaining() {
@@ -1335,11 +1337,14 @@ watch(activeTab, (tab) => {
     </div>
 
     <div v-if="tabsVisited[DRAMA_TAB]" v-show="activeTab === DRAMA_TAB" class="drama-task-panel">
-      <AdminTaskTabHeader
-        :stats="dramaTabStats"
-        settings-title="转存设置"
-        settings-hint="定时任务 · 命名规则 · 通知"
+      <DramaSignalBand
+        v-if="!bandHidden"
+        ref="dramaBandRef"
+        :tasks="dramaTasks"
+        :refresh-pending="dramaLoading"
+        @refresh="refreshDramaTasksFromBand"
         @open-settings="openSettingsDrawer('drama')"
+        @dismiss="handleHideBand"
       />
       <DramaTransferPanel :standalone="false" />
     </div>
