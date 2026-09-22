@@ -5,18 +5,103 @@ package dramatransfer
 // 不引入 guessit/TMDB 兜底（与 CASX 简化策略一致）。
 
 import (
+	"errors"
+	"fmt"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/dlclark/regexp2"
 )
 
 // MagicRegexEntry 是单个魔法正则规则的 pattern/replace 对（来自Trae）
 type MagicRegexEntry struct {
 	Pattern string
 	Replace string
+}
+
+// compiled 是编译后的正则封装（来自Trae）。Go 标准库 regexp 只支持 RE2 语法，
+// 无法匹配 `(?!)` 之类 PCRE lookahead；因此这里在 RE2 编译失败时自动降级到
+// regexp2（PCRE 兼容），让用户可以保存与转存使用带负向先行断言的规则。
+type compiled struct {
+	re   *regexp.Regexp   // 非 nil 表示 RE2 编译成功（首选）
+	pcre *regexp2.Regexp // 非 nil 表示走 PCRE 兼容路径
+}
+
+// MatchString 判定字符串是否命中正则（来自Trae）。
+func (c *compiled) MatchString(s string) bool {
+	if c == nil {
+		return false
+	}
+	if c.re != nil {
+		return c.re.MatchString(s)
+	}
+	ok, _ := c.pcre.MatchString(s)
+	return ok
+}
+
+// ReplaceAllString 用 repl 替换所有命中片段（来自Trae）。
+func (c *compiled) ReplaceAllString(s, repl string) string {
+	if c == nil {
+		return s
+	}
+	if c.re != nil {
+		return c.re.ReplaceAllString(s, repl)
+	}
+	out, err := c.pcre.Replace(s, repl, 0, -1)
+	if err != nil {
+		return s
+	}
+	return out
+}
+
+// FindString 返回第一个命中的整段文本；未命中返回空串（来自Trae）。
+func (c *compiled) FindString(s string) string {
+	if c == nil {
+		return ""
+	}
+	if c.re != nil {
+		return c.re.FindString(s)
+	}
+	m, err := c.pcre.FindStringMatch(s)
+	if err != nil || m == nil {
+		return ""
+	}
+	return m.String()
+}
+
+// FindStringSubmatch 返回第一个命中的组匹配（含 group(0) 全匹配）（来自Trae）。
+// PCRE 路径下，为保持与 Go 标准库一致的返回形状，未捕获的组填空串。
+func (c *compiled) FindStringSubmatch(s string) []string {
+	if c == nil {
+		return nil
+	}
+	if c.re != nil {
+		return c.re.FindStringSubmatch(s)
+	}
+	m, err := c.pcre.FindStringMatch(s)
+	if err != nil || m == nil {
+		return nil
+	}
+	return matchSubmatches(m)
+}
+
+// matchSubmatches 把 regexp2.Match 展开为 []string（来自Trae）。
+// regexp2.Match.Groups() 已包含 group 0（完整匹配），这里直接展开即可，
+// 保持与 Go 标准库 regexp.Regexp.FindStringSubmatch 一致的返回形状。
+func matchSubmatches(m *regexp2.Match) []string {
+	if m == nil {
+		return nil
+	}
+	groups := m.Groups()
+	out := make([]string, 0, len(groups))
+	for _, g := range groups {
+		out = append(out, g.String())
+	}
+	return out
 }
 
 // MagicRename 实现追剧文件名规范化与序号排序（来自Trae）
@@ -27,7 +112,7 @@ type MagicRename struct {
 	MagicVariable map[string]any
 
 	taskName   string
-	compiled   map[string]*regexp.Regexp
+	compiled   map[string]*compiled
 	dirIndex   map[int]string // 序号 -> 模板填充后的文件名
 	lastMagicI int            // set_dir_file_list 推断出的最大序号
 }
@@ -37,7 +122,7 @@ func NewMagicRename() *MagicRename {
 	return &MagicRename{
 		MagicRegex:    defaultMagicRegex(),
 		MagicVariable: defaultMagicVariable(),
-		compiled:      map[string]*regexp.Regexp{},
+		compiled:      map[string]*compiled{},
 		dirIndex:      map[int]string{},
 	}
 }
@@ -84,20 +169,64 @@ func (m *MagicRename) MagicRegexConv(pattern, replace string) (string, string) {
 	return pattern, replace
 }
 
-func (m *MagicRename) compile(pattern string) *regexp.Regexp {
+// compile 编译 pattern 并缓存（来自Trae）。RE2 优先，失败时降级到 PCRE。
+func (m *MagicRename) compile(pattern string) *compiled {
 	if pattern == "" {
 		return nil
 	}
 	if cached, ok := m.compiled[pattern]; ok {
 		return cached
 	}
-	compiled, err := regexp.Compile(pattern)
-	if err != nil {
+	c := compilePattern(pattern)
+	if c == nil {
 		m.compiled[pattern] = nil
 		return nil
 	}
-	m.compiled[pattern] = compiled
-	return compiled
+	m.compiled[pattern] = c
+	return c
+}
+
+// compilePattern 编译单个正则（来自Trae）：RE2 优先，RE2 拒绝时降级到 regexp2（默认 PCRE/Perl 兼容）。
+// 返回 nil 表示两种语法都无法编译。
+func compilePattern(pattern string) *compiled {
+	if re, err := regexp.Compile(pattern); err == nil {
+		return &compiled{re: re}
+	}
+	pcre, err := regexp2.Compile(pattern, 0)
+	if err != nil {
+		return nil
+	}
+	return &compiled{pcre: pcre}
+}
+
+// ValidatePattern 校验 pattern 是否可编译（来自Trae）。
+// RE2 拒绝时降级到 PCRE 校验，避免用户保存含 (?!) 等 lookahead 的规则时报错。
+func ValidatePattern(pattern string) error {
+	if strings.TrimSpace(pattern) == "" {
+		return nil
+	}
+	if _, err := regexp.Compile(pattern); err == nil {
+		return nil
+	}
+	if _, err := regexp2.Compile(pattern, 0); err != nil {
+		return fmt.Errorf("pattern 正则无效：RE2 与 PCRE 语法均无法编译（%v）", err)
+	}
+	return nil
+}
+
+// PatternFlavor 判定 pattern 使用的正则方言（来自Trae），供前端展示"RE2/PCRE"徽标。
+// RE2 优先；若 RE2 拒绝但 PCRE 通过，返回 "PCRE"；两者都失败返回 ("", err)。
+func PatternFlavor(pattern string) (string, error) {
+	if strings.TrimSpace(pattern) == "" {
+		return "", nil
+	}
+	if _, err := regexp.Compile(pattern); err == nil {
+		return "RE2", nil
+	}
+	if _, err := regexp2.Compile(pattern, 0); err == nil {
+		return "PCRE", nil
+	}
+	return "", errors.New("pattern 正则无效：RE2 与 PCRE 语法均无法编译")
 }
 
 // Sub 应用一次 pattern/replace 到文件名（来自Trae）。

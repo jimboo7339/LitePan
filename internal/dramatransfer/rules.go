@@ -6,7 +6,6 @@ package dramatransfer
 
 import (
 	"context"
-	"regexp"
 	"sort"
 	"strings"
 
@@ -158,10 +157,10 @@ func (s *Service) UpsertRule(ctx context.Context, rule *domain.MagicRegexRule) e
 	if err := validateRegexKey(rule.Key); err != nil {
 		return err
 	}
-	// pattern 合法性校验（来自Trae）
+	// pattern 合法性校验（来自Trae）：优先 RE2，失败时降级到 PCRE（支持 lookahead）。
 	if strings.TrimSpace(rule.Pattern) != "" {
-		if _, err := regexp.Compile(rule.Pattern); err != nil {
-			return domain.Errorf(domain.CodeValidation, "pattern 正则无效：%v", err)
+		if err := ValidatePattern(rule.Pattern); err != nil {
+			return domain.Errorf(domain.CodeValidation, "%v", err)
 		}
 	}
 	existing, err := s.rules.Get(ctx, rule.Key)

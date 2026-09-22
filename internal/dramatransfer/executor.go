@@ -340,7 +340,8 @@ func (e *DramaExecutor) planTransfer(shareFiles []driver.ShareItem, destFileName
 	// 展开命名正则（来自Trae）
 	actualPattern, actualReplace := e.mr.MagicRegexConv(pattern, replace)
 
-	var compiledSearch *regexp.Regexp
+	// compiledSearch 支持 PCRE 兼容的正则（来自Trae）：负向先行断言 (?!) 等语法可用。
+	var compiledSearch *compiled
 	if actualPattern != "" {
 		compiledSearch = e.mr.compile(actualPattern)
 	}
