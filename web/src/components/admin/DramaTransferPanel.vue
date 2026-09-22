@@ -17,7 +17,6 @@ import {
   type DramaTaskRun,
 } from "@/api/drama";
 import AppButton from "@/components/base/AppButton.vue";
-import AppBadge from "@/components/base/AppBadge.vue";
 import AppInput from "@/components/base/AppInput.vue";
 import AppSelect from "@/components/base/AppSelect.vue";
 import AppModal from "@/components/base/AppModal.vue";
@@ -195,6 +194,18 @@ const sortIndexText = computed({
     form.sort_index = Number.isFinite(n) && n > 0 ? n : 0;
   },
 });
+
+// 切换单个星期选择（来自Trae）：与 pill 按钮配合，替代原生 checkbox
+function toggleWeek(value: string) {
+  const idx = weekSelection.value.indexOf(value);
+  if (idx >= 0) {
+    weekSelection.value.splice(idx, 1);
+  } else {
+    weekSelection.value.push(value);
+    // 保持周序，方便后续 join 拼接（来自Trae）
+    weekSelection.value.sort((a, b) => Number(a) - Number(b));
+  }
+}
 
 function openCreate() {
   editingId.value = null;
@@ -442,18 +453,33 @@ watch(
 
     <section v-if="activeTab === 'tasks'" class="admin-panel-table-wrap drama-list-panel">
       <div class="panel-head">
-        <div>
-          <div class="panel-title">转存任务</div>
+        <div class="panel-head__title">
+          <div class="panel-title">
+            <i class="fas fa-clapperboard panel-title__icon"></i>
+            <span>转存任务</span>
+          </div>
           <div class="panel-sub">追剧自动转存：填入夸克 / 光鸭分享链接，按规则定时转存到网盘目录。</div>
         </div>
-        <div class="panel-head-actions">
+        <div class="panel-head__toolbar">
           <div class="drama-filters">
-            <input
-              v-model="filters.keyword"
-              class="drama-filter-input"
-              type="text"
-              placeholder="搜索任务名 / 链接 / 路径"
-            />
+            <div class="drama-search">
+              <i class="fas fa-magnifying-glass drama-search__icon"></i>
+              <input
+                v-model="filters.keyword"
+                class="drama-search__input"
+                type="text"
+                placeholder="搜索任务名 / 链接 / 路径"
+              />
+              <button
+                v-if="filters.keyword"
+                type="button"
+                class="drama-search__clear"
+                title="清空"
+                @click="filters.keyword = ''"
+              >
+                <i class="fas fa-circle-xmark"></i>
+              </button>
+            </div>
             <AppSelect
               v-model="filters.status"
               :options="[
@@ -463,11 +489,17 @@ watch(
               ]"
             />
           </div>
-          <AppButton type="button" size="sm" variant="primary" @click="openCreate">
-            <i class="fas fa-plus"></i>
-            新增任务
-          </AppButton>
-          <AppBadge tone="info">{{ filteredTasks.length }} 个任务</AppBadge>
+          <div class="panel-head__divider" aria-hidden="true"></div>
+          <div class="panel-head__meta">
+            <span class="panel-head__badge">
+              <span class="panel-head__badge-dot"></span>
+              {{ filteredTasks.length }} 个任务
+            </span>
+            <AppButton type="button" size="sm" variant="primary" @click="openCreate">
+              <i class="fas fa-plus"></i>
+              新增任务
+            </AppButton>
+          </div>
         </div>
       </div>
       <div class="table-wrap">
@@ -497,9 +529,11 @@ watch(
                     {{ task.status === "running" ? "启用" : "停用" }}
                   </AdminStatusPill>
                   <span v-if="task.run_week" class="drama-desc__week" :title="'仅在这些周几执行（配合全局扫描频率）'">
+                    <i class="fas fa-calendar-week"></i>
                     周{{ task.run_week.split(",").join("、") }}
                   </span>
                   <span v-else class="drama-desc__week" :title="'未勾选周几，每次扫描都会尝试执行'">
+                    <i class="fas fa-calendar-day"></i>
                     每日
                   </span>
                 </div>
@@ -554,7 +588,14 @@ watch(
       @close="drawerOpen = false"
     >
       <div class="drama-form">
-        <div class="drama-form__section-title">基本信息</div>
+        <div class="drama-form__section">
+          <div class="drama-form__section-head">
+            <span class="drama-form__section-bar" aria-hidden="true"></span>
+            <i class="fas fa-id-card drama-form__section-icon"></i>
+            <span class="drama-form__section-title">基本信息</span>
+            <span class="drama-form__section-hint">任务标识与归属账号</span>
+          </div>
+        </div>
         <div class="modal-form__row">
           <FormField label="任务名称" required>
             <AppInput v-model="form.task_name" placeholder="例如：某电视剧" />
@@ -594,7 +635,14 @@ watch(
           </FormField>
         </div>
 
-        <div class="drama-form__section-title">保存规则</div>
+        <div class="drama-form__section">
+          <div class="drama-form__section-head">
+            <span class="drama-form__section-bar" aria-hidden="true"></span>
+            <i class="fas fa-gear drama-form__section-icon"></i>
+            <span class="drama-form__section-title">保存规则</span>
+            <span class="drama-form__section-hint">匹配、重命名、判重与起始位置</span>
+          </div>
+        </div>
         <div class="modal-form__row">
           <FormField label="内置规则">
             <AppSelect
@@ -632,7 +680,14 @@ watch(
           </FormField>
         </div>
 
-        <div class="drama-form__section-title">更新与时间</div>
+        <div class="drama-form__section">
+          <div class="drama-form__section-head">
+            <span class="drama-form__section-bar" aria-hidden="true"></span>
+            <i class="fas fa-clock-rotate-left drama-form__section-icon"></i>
+            <span class="drama-form__section-title">更新与时间</span>
+            <span class="drama-form__section-hint">子目录筛选、结束日期与运行星期</span>
+          </div>
+        </div>
         <div class="modal-form__row">
           <FormField label="需转存的文件夹（update_subdir）">
             <AppInput v-model="form.update_subdir" placeholder="正则，例如：^更新$（留空则处理全部）" />
@@ -647,24 +702,28 @@ watch(
             />
           </FormField>
         </div>
-        <div class="modal-form__row">
+        <div class="modal-form__row modal-form__row--split">
           <FormField label="截止日期（YYYY-MM-DD）">
             <AppInput v-model="form.end_date" placeholder="例如：2099-12-31" />
           </FormField>
           <FormField label="运行星期">
             <div class="drama-week">
-              <label v-for="w in WEEK_OPTIONS" :key="w.value" class="drama-week__item">
-                <input
-                  v-model="weekSelection"
-                  type="checkbox"
-                  :value="w.value"
-                  class="drama-week__checkbox"
-                />
-                <span>{{ w.label }}</span>
-              </label>
+              <div class="drama-week__pills" role="group" aria-label="运行星期">
+                <button
+                  v-for="w in WEEK_OPTIONS"
+                  :key="w.value"
+                  type="button"
+                  class="drama-week__pill"
+                  :class="{ 'drama-week__pill--on': weekSelection.includes(w.value) }"
+                  :aria-pressed="weekSelection.includes(w.value)"
+                  @click="toggleWeek(w.value)"
+                >
+                  {{ w.label }}
+                </button>
+              </div>
               <div class="drama-week__hint">
-                留空表示每天都能跑；勾选后仅在这些周几执行。
-                实际扫描频率由「转存设置」的全局 Cron 表达式决定。
+                <i class="fas fa-circle-info"></i>
+                <span>留空表示每天都能跑；勾选后仅在这些周几执行。</span>
               </div>
             </div>
           </FormField>
@@ -672,12 +731,18 @@ watch(
       </div>
 
       <template #footer>
-        <div class="modal-form__footer">
+        <div class="modal-form__footer drama-modal-footer">
+          <div class="drama-modal-footer__hint">
+            <i class="fas fa-circle-info"></i>
+            <span>“保存并运行一次”会在保存后立即触发一次转存，适合首次配置验证。</span>
+          </div>
           <AppButton type="button" variant="cancel" @click="drawerOpen = false">取消</AppButton>
           <AppButton type="button" variant="secondary" :disabled="submitting" @click="submitTask">
+            <i class="fas fa-floppy-disk"></i>
             {{ submitting ? "保存中…" : "保存" }}
           </AppButton>
           <AppButton type="button" variant="primary" :disabled="submitting" @click="submitAndRunOnce">
+            <i class="fas fa-bolt"></i>
             {{ submitting ? "处理中…" : "保存并运行一次" }}
           </AppButton>
         </div>
@@ -767,22 +832,89 @@ watch(
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 14px;
-  padding: 16px 20px;
+  gap: 20px;
+  padding: 14px 20px;
   border-bottom: 1px solid var(--border-soft);
-  background: var(--panel-head-bg);
+  background: linear-gradient(180deg, var(--panel-head-bg) 0%, var(--surface) 100%);
+}
+
+.panel-head__title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex-shrink: 0;
 }
 
 .panel-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   font-size: 15.5px;
-  font-weight: 800;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: 0.01em;
+}
+
+.panel-title__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: var(--accent-soft);
+  color: var(--brand);
+  font-size: 12px;
 }
 
 .panel-sub {
-  margin-top: 3px;
   color: var(--text-muted);
   font-size: 12.5px;
   line-height: 1.5;
+}
+
+.panel-head__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 1;
+  min-width: 0;
+}
+
+.panel-head__divider {
+  width: 1px;
+  height: 22px;
+  background: var(--border);
+  opacity: 0.8;
+}
+
+.panel-head__meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.panel-head__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--brand) 8%, transparent);
+  color: var(--brand-strong);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: nowrap;
+}
+
+.panel-head__badge-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--brand);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 20%, transparent);
 }
 
 .table-wrap {
@@ -794,12 +926,12 @@ watch(
   table-layout: fixed;
 }
 
-.col-name { width: 20%; }
-.col-account { width: 13%; }
-.col-path { width: 22%; }
-.col-pattern { width: 13%; }
-.col-last { width: 14%; }
-.col-op { width: 18%; }
+.col-name { width: 22%; }
+.col-account { width: 10%; }
+.col-path { width: 24%; }
+.col-pattern { width: 12%; }
+.col-last { width: 15%; }
+.col-op { width: 17%; }
 
 .drama-table th.col-op {
   text-align: center;
@@ -807,7 +939,8 @@ watch(
 
 .drama-name {
   color: var(--text);
-  font-weight: 700;
+  font-weight: 600;
+  font-size: 14px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -816,15 +949,34 @@ watch(
 .drama-desc {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-top: 5px;
+  gap: 6px;
+  margin-top: 4px;
   flex-wrap: wrap;
+}
+
+.drama-desc__week {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-sunken);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: 0.02em;
+}
+
+.drama-desc__week i {
+  font-size: 10px;
 }
 
 .drama-account {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  color: var(--text-regular);
 }
 
 .drama-path {
@@ -832,31 +984,39 @@ watch(
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 13px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 .drama-pattern {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
   max-width: 100%;
-  padding: 2px 8px;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
   border-radius: var(--radius-pill);
-  background: var(--surface-sunken);
-  color: var(--text-muted);
-  font-size: 12px;
+  background: color-mix(in srgb, var(--brand) 6%, var(--surface));
+  color: var(--accent-text);
+  font-size: 11.5px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  line-height: 1.3;
 }
 
 .drama-last__status {
   font-weight: 600;
   color: var(--text-regular);
+  font-size: 13px;
 }
 
 .drama-last__time {
   margin-top: 2px;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 11.5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 .drama-filters {
@@ -865,50 +1025,255 @@ watch(
   gap: 8px;
 }
 
-.drama-filter-input {
-  width: 200px;
-  padding: 8px 12px;
+.drama-search {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.drama-search__icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  font-size: 12px;
+  pointer-events: none;
+}
+
+.drama-search__input {
+  width: 220px;
+  padding: 8px 30px 8px 30px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-control);
   background: var(--surface);
   color: var(--text);
   font-size: 13px;
-  transition: border-color 0.15s;
+  transition: border-color var(--transition), box-shadow var(--transition), background var(--transition);
 }
 
-.drama-filter-input:focus {
+.drama-search__input::placeholder {
+  color: var(--text-muted);
+  opacity: 0.75;
+}
+
+.drama-search__input:focus {
   outline: none;
   border-color: var(--brand);
+  background: var(--surface);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.drama-search__clear {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition);
+}
+
+.drama-search__clear:hover {
+  background: var(--surface-sunken);
+  color: var(--text);
 }
 
 .drama-filters :deep(.select) {
-  width: 120px;
+  width: 132px;
 }
 
 /* 表单弹窗（来自Trae） */
 .drama-form {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
 }
 
-.share-url-row {
+/* 分区头（来自Trae）：左竖条 + 图标 + 标题 + 描述，视觉分区更清晰 */
+.drama-form__section {
+  margin-top: 2px;
+  margin-bottom: 2px;
+}
+
+.drama-form__section-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0 6px 8px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.drama-form__section-bar {
+  display: inline-block;
+  width: 3px;
+  height: 14px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, var(--brand-start), var(--brand-end));
+  flex-shrink: 0;
+}
+
+.drama-form__section-icon {
+  color: var(--brand);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.drama-form__section-title {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: 0.01em;
+}
+
+.drama-form__section-hint {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  font-weight: 400;
+  padding-right: 4px;
+}
+
+.share-url-row,
+.save-path-row {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.share-url-row .app-input {
+.share-url-row .app-input,
+.save-path-row .app-input {
   flex: 1;
+  min-width: 0;
+}
+
+.share-url-row .app-button,
+.save-path-row .app-button {
+  flex-shrink: 0;
 }
 
 .drama-form__section-title {
-  margin-top: 4px;
-  padding-bottom: 6px;
-  border-bottom: 1px solid var(--border-soft);
-  font-size: 13px;
-  font-weight: 700;
+  /* kept for backward compat with legacy section title */
+}
+
+.modal-form__row--split {
+  align-items: stretch;
+}
+
+/* 弹窗底部按钮区（来自Trae）：左信息提示 + 右按钮组，主操作与次操作视觉分层 */
+.drama-modal-footer {
+  align-items: center;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-soft);
+  margin-top: 12px;
+}
+
+.drama-modal-footer__hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: auto;
   color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.drama-modal-footer__hint i {
+  color: var(--info);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+/* 运行星期 pill 分段按钮（来自Trae）：7 个均分，替代拥挤的原生 checkbox */
+.drama-week {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.drama-week__pills {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 6px;
+}
+
+.drama-week__pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text-regular);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background var(--transition),
+    border-color var(--transition),
+    color var(--transition),
+    box-shadow var(--transition),
+    transform 0.1s ease;
+  user-select: none;
+}
+
+.drama-week__pill:hover:not(:disabled) {
+  border-color: var(--brand);
+  color: var(--brand);
+}
+
+.drama-week__pill:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.drama-week__pill--on {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: var(--text-on-brand);
+  box-shadow: var(--shadow-brand);
+  font-weight: 600;
+}
+
+.drama-week__pill--on:hover:not(:disabled) {
+  color: var(--text-on-brand);
+}
+
+.drama-week__pill:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.drama-week__hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-left: 2px solid var(--info);
+  background: color-mix(in srgb, var(--info) 8%, transparent);
+  color: var(--text-muted);
+  font-size: 11.5px;
+  line-height: 1.4;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+.drama-week__hint i {
+  color: var(--info);
+  font-size: 12px;
+  flex-shrink: 0;
 }
 
 .drama-switch {
@@ -939,44 +1304,6 @@ watch(
 .drama-switch__text {
   font-size: 13px;
   color: var(--text-regular);
-}
-
-/* 任务级运行星期选择（来自Trae）：checkbox 组 + 空态提示 */
-.drama-desc__week {
-  color: var(--text-muted);
-  font-size: 12px;
-  padding: 1px 6px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--bg-elevated);
-}
-
-.drama-week {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 12px;
-  padding: 4px 0;
-}
-
-.drama-week__item {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 13px;
-  color: var(--text-regular);
-  cursor: pointer;
-}
-
-.drama-week__checkbox {
-  accent-color: var(--brand);
-}
-
-.drama-week__hint {
-  flex: 1 0 100%;
-  font-size: 12px;
-  color: var(--text-muted);
-  line-height: 1.5;
 }
 
 /* 运行记录抽屉（来自Trae，风格同 AutomationPanel） */
