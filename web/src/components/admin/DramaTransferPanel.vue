@@ -10,11 +10,13 @@ import {
   deleteDramaTask,
   fetchDramaTaskRuns,
   fetchDramaTasks,
+  fetchMagicRegexRules,
   runDramaTask,
   updateDramaTask,
   type DramaTask,
   type DramaTaskInput,
   type DramaTaskRun,
+  type MagicRegexRule,
 } from "@/api/drama";
 import AppButton from "@/components/base/AppButton.vue";
 import AppInput from "@/components/base/AppInput.vue";
@@ -183,6 +185,29 @@ const emptyForm = (): DramaTaskInput => ({
   status: "running",
 });
 const form = reactive<DramaTaskInput>(emptyForm());
+
+// 内置规则的默认替换表达式（来自Trae）：挂载时从 /admin/drama/rules 拉一次，
+// 便于用户在任务表单里选中内置规则后自动带出 default_replace（或用户已覆盖的 replace）。
+const magicRules = ref<MagicRegexRule[]>([]);
+const builtinReplaceMap = computed(() => {
+  const m = new Map<string, string>();
+  for (const r of magicRules.value) {
+    const v = (r.replace ?? "").length > 0 ? r.replace : r.default_replace ?? "";
+    if (r.key && v) m.set(r.key, v);
+  }
+  return m;
+});
+
+// 用户是否在最近一次「切换内置规则」后手动改过 replace（来自Trae）。
+// 一旦用户编辑过 replace，就不再自动覆盖；换到另一条规则时重置为未编辑。
+const replaceDirty = ref(false);
+
+// applyBuiltinReplace 若当前 pattern 是内置规则且 replace 未被用户手动改过，则带入默认替换表达式（来自Trae）。
+function applyBuiltinReplace() {
+  if (replaceDirty.value) return;
+  const tpl = builtinReplaceMap.value.get(form.pattern);
+  if (tpl != null) form.replace = tpl;
+}
 // 运行星期多选（来自Trae）：数组形式，提交时按 ISO 1-7 拼成逗号分隔字符串；空数组 = 每天都能跑。
 const weekSelection = ref<string[]>([]);
 // 排序基数输入代理（来自Trae）：AppInput 始终 emit 字符串，
@@ -211,11 +236,23 @@ function openCreate() {
   editingId.value = null;
   Object.assign(form, emptyForm());
   weekSelection.value = [];
+  // 新建表单重置 dirty 标记，让默认 $TV_REGEX 的替换表达式能够被自动带入（来自Trae）
+  replaceDirty.value = false;
+  applyBuiltinReplace();
   drawerOpen.value = true;
+}
+
+// 处理 replace 输入（来自Trae）：替代 v-model，在写入值的同时置脏，
+// 避免切换内置规则时 applyBuiltinReplace 覆盖用户手改的替换表达式。
+function onReplaceChange(v: string) {
+  form.replace = v;
+  replaceDirty.value = true;
 }
 
 function openEdit(task: DramaTask) {
   editingId.value = task.id;
+  // 打开编辑前先置脏，避免 pattern watch 触发 applyBuiltinReplace 覆盖任务已有的 replace（来自Trae）
+  replaceDirty.value = true;
   Object.assign(form, {
     task_name: task.task_name,
     account_id: task.account_id,
@@ -425,10 +462,33 @@ async function loadData() {
   }
 }
 
+// 拉取命名规则列表，用于内置规则选中后自动带出默认替换表达式（来自Trae）。
+// 失败时静默降级：不影响任务表单的正常保存。
+async function loadMagicRules() {
+  try {
+    const data = await fetchMagicRegexRules();
+    magicRules.value = data.rules ?? [];
+  } catch {
+    // 静默失败，builtinReplaceMap 保持空；用户仍可手动输入替换表达式（来自Trae）
+  }
+}
+
 onMounted(async () => {
   if (!accounts.value.length) await accountsStore.loadAccounts();
-  await loadData();
+  await Promise.all([loadData(), loadMagicRules()]);
+  // 首次进入若抽屉为新建态（默认 $TV_REGEX），主动带一次默认替换表达式（来自Trae）
+  applyBuiltinReplace();
 });
+
+// pattern 变化时（含手动输入与下拉切换）尝试自动带入默认替换表达式（来自Trae）。
+// 若用户已手动改过 replace（replaceDirty=true），跳过，避免覆盖用户输入。
+watch(
+  () => form.pattern,
+  () => {
+    replaceDirty.value = false;
+    applyBuiltinReplace();
+  },
+);
 
 watch(
   () => activeAccounts.value.map((a) => a.id).join(","),
@@ -657,7 +717,11 @@ watch(
         </div>
         <div class="modal-form__row">
           <FormField label="替换表达式（replace）">
-            <AppInput v-model="form.replace" placeholder="例如：\1E\2.\3（留空则保持原名）" />
+            <AppInput
+              :model-value="form.replace"
+              placeholder="例如：\1E\2.\3（留空则保持原名）"
+              @update:modelValue="onReplaceChange"
+            />
           </FormField>
           <FormField label="排序基数（sort_index）">
             <AppInput v-model="sortIndexText" type="number" min="1" />
