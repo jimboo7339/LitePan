@@ -3,7 +3,7 @@
 // 复刻 CASX DramaTaskDrawer 的「选择需转存的文件夹」弹窗：
 // 支持按层级点击浏览分享目录、查看哪些文件能转存、以及规则重命名后的目标文件名。
 // 浏览通过后端 /admin/drama/share/preview 的 pdir_fid 参数逐级拉取。
-import { ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import { getApiErrorMessage } from "@/api/client";
 import { previewShare, type SharePreviewItem } from "@/api/drama";
 import AppModal from "@/components/base/AppModal.vue";
@@ -47,9 +47,33 @@ const loading = ref(false);
 const items = ref<SharePreviewItem[]>([]);
 const driveType = ref("");
 const rootShareUrl = ref("");
+// 后端去重后、截断前的原始条目数（用于截断提示）（来自Trae）
+const total = ref(0);
+const truncated = ref(false);
+// 前端展示层分页：每页 20 条，避免超大分享列表撑爆表格渲染（来自Trae）
+const PAGE_SIZE = 20;
+const page = ref(1);
 // 浏览栈：首项为根目录，后续为逐级进入的子目录（来自Trae）
 const stack = ref<{ name: string; fid: string }[]>([]);
 const currentFid = ref("");
+
+// 计算当前页要渲染的分片（来自Trae）
+const pageItems = computed<SharePreviewItem[]>(() => {
+  const start = (page.value - 1) * PAGE_SIZE;
+  return items.value.slice(start, start + PAGE_SIZE);
+});
+const totalPages = computed(() => Math.max(1, Math.ceil(items.value.length / PAGE_SIZE)));
+const pageLabel = computed(() => {
+  if (!items.value.length) return "0 项";
+  const from = (page.value - 1) * PAGE_SIZE + 1;
+  const to = Math.min(page.value * PAGE_SIZE, items.value.length);
+  return `第 ${from}-${to} 条 / 共 ${items.value.length} 条`;
+});
+
+function gotoPage(n: number) {
+  if (n < 1 || n > totalPages.value) return;
+  page.value = n;
+}
 
 // 从分享链接中解析起始 fid（与后端 ExtractShareURL 解析规则对齐）（来自Trae）
 function extractShareFid(url: string): string {
@@ -110,6 +134,10 @@ async function refresh(fid?: string) {
     driveType.value = data.drive_type || "";
     currentFid.value = data.pdir_fid || fid || "";
     items.value = data.items || [];
+    total.value = data.total || 0;
+    truncated.value = !!data.truncated;
+    // 每次刷新重置到第一页（来自Trae）
+    page.value = 1;
   } catch (e) {
     toast.error(getApiErrorMessage(e, "预览失败"));
     items.value = [];
@@ -199,6 +227,11 @@ watch(
         <div class="preview__path" :title="currentPathLabel()">当前路径：{{ currentPathLabel() }}</div>
       </div>
 
+      <div v-if="truncated" class="preview__notice" role="alert">
+        <i class="fas fa-triangle-exclamation"></i>
+        <span>目录条目较多，已展示前 {{ items.length }} 条（后端共 {{ total }} 条）；如需精确核对，建议进入更深的子目录浏览。</span>
+      </div>
+
       <div class="preview__table-wrap">
         <table class="admin-table preview-table">
           <thead>
@@ -217,7 +250,7 @@ watch(
               <td colspan="4" class="empty-cell">该目录下没有条目，或分享链接不可访问</td>
             </tr>
             <tr
-              v-for="item in items"
+              v-for="item in pageItems"
               v-else
               :key="item.fid"
               class="preview-row"
@@ -245,6 +278,21 @@ watch(
             </tr>
           </tbody>
         </table>
+      </div>
+
+      <div v-if="!loading && items.length > PAGE_SIZE" class="preview__pager">
+        <span class="preview__pager-info">{{ pageLabel }}</span>
+        <div class="preview__pager-actions">
+          <AppButton type="button" size="sm" variant="secondary" :disabled="page <= 1" @click="gotoPage(page - 1)">
+            <i class="fas fa-chevron-left"></i>
+            上一页
+          </AppButton>
+          <span class="preview__pager-page">第 {{ page }} / {{ totalPages }} 页</span>
+          <AppButton type="button" size="sm" variant="secondary" :disabled="page >= totalPages" @click="gotoPage(page + 1)">
+            下一页
+            <i class="fas fa-chevron-right"></i>
+          </AppButton>
+        </div>
       </div>
     </div>
   </AppModal>
@@ -291,6 +339,55 @@ watch(
   overflow: auto;
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-md);
+}
+
+.preview__notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+  color: var(--warning);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.preview__notice i {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.preview__pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  padding: 8px 4px 0;
+  border-top: 1px solid var(--border-soft);
+}
+
+.preview__pager-info {
+  color: var(--text-muted);
+  font-size: 12.5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.preview__pager-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.preview__pager-page {
+  color: var(--text-muted);
+  font-size: 12.5px;
+  min-width: 82px;
+  text-align: center;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 .preview-table {

@@ -154,6 +154,9 @@ export interface SharePreviewResult {
   drive_type: string;
   pwd_id: string;
   pdir_fid: string;
+  total: number;      // 驱动返回的原始条目数（后端去重后、截断前）
+  max_items: number;  // 本次请求的 MaxItems 上限
+  truncated: boolean; // 是否因 MaxItems 截断
   items: SharePreviewItem[];
 }
 

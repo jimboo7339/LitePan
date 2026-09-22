@@ -291,6 +291,7 @@ func (d *Driver) ListShareItems(ctx context.Context, pwdID, stoken, pdirFID stri
 	}
 
 	var merged []driver.ShareItem
+	seen := make(map[string]struct{})
 	for page := 1; ; page++ {
 		var data shareListData
 		if err := d.publicPostShare(ctx, pathShareFilesList, map[string]any{
@@ -306,8 +307,29 @@ func (d *Driver) ListShareItems(ctx context.Context, pwdID, stoken, pdirFID stri
 		if len(data.List) == 0 {
 			break
 		}
+		// 服务端分页失效兜底：若本页首条 fid 已见过，说明服务端忽略 page 参数
+		// 重复返回同一批数据，立即停止，防止累积上万条重复项（来自Trae）
+		if first := data.List[0].toShareItem(); first.FID != "" {
+			if _, ok := seen[first.FID]; ok {
+				break
+			}
+		}
+		newCount := 0
 		for _, e := range data.List {
-			merged = append(merged, e.toShareItem())
+			si := e.toShareItem()
+			if si.FID == "" {
+				continue
+			}
+			if _, ok := seen[si.FID]; ok {
+				continue
+			}
+			seen[si.FID] = struct{}{}
+			merged = append(merged, si)
+			newCount++
+		}
+		// 本页无新增 fid，同样视为服务端分页失效（来自Trae）
+		if newCount == 0 {
+			break
 		}
 		if data.Total > 0 && len(merged) >= data.Total {
 			break

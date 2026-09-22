@@ -49,7 +49,10 @@ type PreviewShareResult struct {
 	DriveType string
 	PwdID     string
 	PdirFID   string
+	Total     int                // 驱动返回的原始条目数（来自Trae，供前端提示截断）
 	Items     []PreviewShareItem
+	MaxItems  int                // 请求的 MaxItems 上限（来自Trae）
+	Truncated bool               // 是否因 MaxItems 截断（来自Trae）
 }
 
 // previewVideoExts 参与重命名预览的视频后缀（来自Trae，与 CASX video_exts 一致）
@@ -122,6 +125,36 @@ func previewShareWithDriver(ctx context.Context, drv driver.Driver, in PreviewSh
 	shareItems, err := st.ListShareItems(ctx, pwdID, stoken, pdirFID)
 	if err != nil {
 		return nil, err
+	}
+
+	// 4.1 兜底：按 fid 去重，防御个别驱动分页失效导致重复条目污染预览（来自Trae）
+	{
+		dedup := make(map[string]struct{}, len(shareItems))
+		filtered := shareItems[:0]
+		for _, it := range shareItems {
+			f := strings.TrimSpace(it.FID)
+			if f == "" {
+				continue
+			}
+			if _, ok := dedup[f]; ok {
+				continue
+			}
+			dedup[f] = struct{}{}
+			filtered = append(filtered, it)
+		}
+		shareItems = filtered
+	}
+
+	// 4.2 MaxItems 截断：防止超大分享链接撑爆下游处理与前端渲染（来自Trae）
+	totalFromDriver := len(shareItems)
+	maxItems := in.MaxItems
+	if maxItems <= 0 {
+		maxItems = 500
+	}
+	truncated := false
+	if len(shareItems) > maxItems {
+		shareItems = shareItems[:maxItems]
+		truncated = true
 	}
 
 	// 5. 构造 MagicRename 并展开命名正则（来自Trae）
@@ -295,6 +328,9 @@ func previewShareWithDriver(ctx context.Context, drv driver.Driver, in PreviewSh
 		DriveType: drv.Config().Name,
 		PwdID:     pwdID,
 		PdirFID:   pdirFID,
+		Total:     totalFromDriver,
 		Items:     previewItems,
+		MaxItems:  maxItems,
+		Truncated: truncated,
 	}, nil
 }

@@ -150,6 +150,9 @@ type dramaPreviewResultDTO struct {
 	DriveType string                `json:"drive_type"`
 	PwdID     string                `json:"pwd_id"`
 	PdirFID   string                `json:"pdir_fid"`
+	Total     int                   `json:"total"`
+	MaxItems  int                   `json:"max_items"`
+	Truncated bool                  `json:"truncated"`
 	Items     []dramaPreviewItemDTO `json:"items"`
 }
 
@@ -187,6 +190,9 @@ func (h *Handler) previewDramaShare(w http.ResponseWriter, r *http.Request) {
 		DriveType: result.DriveType,
 		PwdID:     result.PwdID,
 		PdirFID:   result.PdirFID,
+		Total:     result.Total,
+		MaxItems:  result.MaxItems,
+		Truncated: result.Truncated,
 		Items:     make([]dramaPreviewItemDTO, 0, len(result.Items)),
 	}
 	for _, it := range result.Items {
