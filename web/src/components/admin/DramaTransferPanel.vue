@@ -2,7 +2,7 @@
 // 追剧转存任务管理面板（来自Trae）。
 // 复刻 CASX DramaTaskView / DramaTaskDrawer 的核心逻辑，
 // 采用 LitePan 管理后台的面板/表格/弹窗风格。
-import { computed, onMounted, reactive, ref, watch } from "vue";
+import { computed, nextTick, onMounted, reactive, ref, watch } from "vue";
 import { storeToRefs } from "pinia";
 import { getApiErrorMessage } from "@/api/client";
 import {
@@ -201,6 +201,10 @@ const builtinReplaceMap = computed(() => {
 // 用户是否在最近一次「切换内置规则」后手动改过 replace（来自Trae）。
 // 一旦用户编辑过 replace，就不再自动覆盖；换到另一条规则时重置为未编辑。
 const replaceDirty = ref(false);
+// 表单是否处于程序化填充期（openEdit / openCreate / onMounted 初次注入）（来自Trae）。
+// 期间 pattern 的 watch 会被跳过，避免 openEdit 里刚设的 replaceDirty=true 被立即重置，
+// 导致用户手写的 replace 在打开编辑弹窗瞬间被内置规则的默认值覆盖。
+const populating = ref(false);
 
 // applyBuiltinReplace 若当前 pattern 是内置规则且 replace 未被用户手动改过，则带入默认替换表达式（来自Trae）。
 function applyBuiltinReplace() {
@@ -234,12 +238,14 @@ function toggleWeek(value: string) {
 
 function openCreate() {
   editingId.value = null;
+  replaceDirty.value = false;
+  populating.value = true;
   Object.assign(form, emptyForm());
   weekSelection.value = [];
-  // 新建表单重置 dirty 标记，让默认 $TV_REGEX 的替换表达式能够被自动带入（来自Trae）
-  replaceDirty.value = false;
   applyBuiltinReplace();
   drawerOpen.value = true;
+  // 新建允许默认 replace 被带出：在下一 tick 释放 populating，来自Trae
+  void nextTick(() => { populating.value = false; });
 }
 
 // 处理 replace 输入（来自Trae）：替代 v-model，在写入值的同时置脏，
@@ -253,6 +259,8 @@ function openEdit(task: DramaTask) {
   editingId.value = task.id;
   // 打开编辑前先置脏，避免 pattern watch 触发 applyBuiltinReplace 覆盖任务已有的 replace（来自Trae）
   replaceDirty.value = true;
+  // 进入 populating 期，pattern watch 在此期间跳过对 replaceDirty 的重置（来自Trae）
+  populating.value = true;
   Object.assign(form, {
     task_name: task.task_name,
     account_id: task.account_id,
@@ -274,6 +282,8 @@ function openEdit(task: DramaTask) {
     .map((s) => s.trim())
     .filter((s) => WEEK_OPTIONS.some((w) => w.value === s));
   drawerOpen.value = true;
+  // 一个 tick 之后释放 populating：此时 pattern watch 已跑完，来自Trae
+  void nextTick(() => { populating.value = false; });
 }
 
 // 保存任务（来自Trae）
@@ -482,9 +492,12 @@ onMounted(async () => {
 
 // pattern 变化时（含手动输入与下拉切换）尝试自动带入默认替换表达式（来自Trae）。
 // 若用户已手动改过 replace（replaceDirty=true），跳过，避免覆盖用户输入。
+// populating=true 期间（openEdit/openCreate 的表单填充期）不动 replaceDirty，
+// 避免破坏 openEdit 里为「保留用户已有 replace」而设的保护。
 watch(
   () => form.pattern,
   () => {
+    if (populating.value) return;
     replaceDirty.value = false;
     applyBuiltinReplace();
   },

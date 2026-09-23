@@ -124,16 +124,24 @@ func (s *Service) schedulerLoop(ctx context.Context) {
 }
 
 // scheduleOnce 遍历运行中的任务，执行到期的（来自Trae）
+//
+// 两层触发（来自Trae）：
+//  1. Cron 命中：全局 crontab 命中的分钟，扫描所有 active 任务；
+//  2. 当日补跑（catch-up）：不论全局 cron 是否命中，只要任务今天还没跑过且通过
+//     任务级校验（RunWeek/EndDate），就补跑一次。这样即便服务错过 0:00 那一分钟、
+//     或用户把全局 crontab 配得过窄（如 "0 0 * * *"），任务也不会"跑过一次就死"。
 func (s *Service) scheduleOnce(ctx context.Context) {
 	// 全局调度开关检查，来自Trae
 	if s.settings != nil && !s.settings.Bool(settings.KeyDramaSchedulerEnabled) {
 		return
 	}
-	// Cron 匹配检查：只有在 cron 表达式匹配的分钟才触发，来自Trae
+	now := time.Now()
+	// Cron 是否命中决定"扫描时机"，未命中时静默返回（来自Trae）
+	cronHit := true
 	if s.settings != nil {
 		crontab := s.settings.String(settings.KeyDramaSchedulerCrontab)
-		if crontab != "" && !cronMatch(crontab, time.Now()) {
-			return
+		if crontab != "" && !cronMatch(crontab, now) {
+			cronHit = false
 		}
 	}
 	tasks, err := s.repo.ListActive(ctx)
@@ -141,15 +149,26 @@ func (s *Service) scheduleOnce(ctx context.Context) {
 		s.log.Warn("drama scheduler list failed", "err", err)
 		return
 	}
-	now := time.Now()
 	for _, task := range tasks {
 		if task == nil {
 			continue
 		}
-		if err := ValidateSchedule(task, false, now); err != nil {
-			continue // 不在运行星期或已过期，跳过
+		// Cron 未命中：仅做当日补跑（若任务今天还没跑过），来自Trae
+		if !cronHit {
+			if err := ValidateSchedule(task, false, now); err != nil {
+				continue
+			}
+			if isRunToday(task.LastRunAt, now) {
+				continue
+			}
+			s.log.Info("drama task catch-up scheduled (missed cron window)", "task_id", task.ID)
+			go s.runTaskSafe(context.WithoutCancel(ctx), task.ID, false)
+			continue
 		}
-		// 防止同一天重复执行：检查 last_run_at
+		if err := ValidateSchedule(task, false, now); err != nil {
+			continue // 不在运行星期或已过期，跳过（静默，避免每分钟一次的日志噪声，来自Trae）
+		}
+		// 防止同一天重复执行：检查 last_run_at（来自Trae）
 		if isRunToday(task.LastRunAt, now) {
 			continue
 		}
