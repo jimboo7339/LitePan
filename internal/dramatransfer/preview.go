@@ -211,7 +211,9 @@ func previewShareWithDriver(ctx context.Context, drv driver.Driver, in PreviewSh
 		}
 
 		// 目录或非视频文件：仅展示，不参与重命名（来自Trae）
-		if isDir || !isPreviewVideoName(name) {
+		// 例外：当 actualPattern 为空（全量转存模式）时，所有非目录文件都参与转存预览，
+		// 不再受 previewVideoExts 白名单限制——与 executor.planTransfer 行为对齐（来自Trae）。
+		if isDir || (actualPattern != "" && !isPreviewVideoName(name)) {
 			// 目录仍按 update_subdir 标注是否命中（来自Trae）
 			if isDir && compiledSubdir != nil && compiledSubdir.MatchString(name) {
 				item.NameRe = name

@@ -403,6 +403,11 @@ watch(
   cursor: default;
 }
 
+/* 换行后内容顶部对齐，避免长文件名把大小/时间列撑歪（来自Trae） */
+.preview-row > td {
+  vertical-align: top;
+}
+
 .preview-row--dir {
   cursor: pointer;
 }
@@ -411,11 +416,11 @@ watch(
   color: var(--brand);
 }
 
+/* 长文件名自动换行，不遮挡大小/时间列（来自Trae） */
 .preview-name {
   color: var(--text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  word-break: break-all;
+  overflow-wrap: anywhere;
 }
 
 .preview-tag {
@@ -446,10 +451,10 @@ watch(
   white-space: nowrap;
 }
 
+/* 重命名后的文件名也可能很长，同样允许换行（来自Trae） */
 .preview-re {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  word-break: break-all;
+  overflow-wrap: anywhere;
 }
 
 .preview-re__renamed {
