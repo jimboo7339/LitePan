@@ -216,7 +216,9 @@ func TestRelUnderAbsRootWithRelativeFull(t *testing.T) {
 	}
 	posterRel, err := filepath.Rel(cwd, posterAbs)
 	if err != nil {
-		t.Fatal(err)
+		// Windows 下仓库与系统临时目录可能在不同盘符（如 F: 源码 + C: %TEMP%），
+		// 跨盘无法构造 cwd 相对路径，此时跳过；Linux CI 不受影响。
+		t.Skipf("无法在当前平台构造 cwd 相对路径: %v", err)
 	}
 	got := relUnder(root, posterRel)
 	want := filepath.ToSlash(filepath.Join("航海王 (1999)", "poster.jpg"))

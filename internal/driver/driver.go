@@ -37,6 +37,7 @@ type Config struct {
 	ProvideHashes          []string      // 跨盘秒传：源盘可提供的指纹类型（sha1/md5）
 	RapidUploadHashes      []string      // 跨盘秒传：目标盘支持的指纹秒传类型
 	UploadConflictPolicies []string      // 跨盘秒传/上传：前端可选冲突策略
+	UploadUseHTTP2         bool          // 大文件上传默认 HTTP/1.1；驱动实测需要 HTTP/2 时显式声明
 	// QRDevices 是扫码登录时可选设备来源；空表示扫码界面不提供切换。
 	QRDevices []FieldOption
 	// QRDeviceField 是 Addition 中保存设备来源的 JSON 字段名，与 QRDevices 配套。
@@ -122,9 +123,9 @@ type FolderCreator interface {
 	CreateFolder(ctx context.Context, parentID, name string) (*domain.FileItem, error)
 }
 
-// ShareItem 是分享链接内的一个文件/目录条目（来自Trae）。
+// ShareEntry 是分享链接内的一个文件/目录条目（来自Trae）。
 // ShareFIDToken 仅部分网盘（夸克）需要，用于转存时一并上送；不需要的网盘填空。
-type ShareItem struct {
+type ShareEntry struct {
 	FID           string
 	FileName      string
 	Size          int64
@@ -166,7 +167,7 @@ type ShareTransferer interface {
 	// GetShareToken 获取分享访问令牌（夸克为 stoken；光鸭为内部 JSON 字符串）。
 	GetShareToken(ctx context.Context, pwdID, passcode string) (stoken string, err error)
 	// ListShareItems 拉取分享目录下的一级条目（不递归）。
-	ListShareItems(ctx context.Context, pwdID, stoken, pdirFID string) ([]ShareItem, error)
+	ListShareItems(ctx context.Context, pwdID, stoken, pdirFID string) ([]ShareEntry, error)
 	// SaveShareFiles 提交转存任务；不需要 task_id 的网盘可在内部完成轮询，taskID 返回空。
 	SaveShareFiles(ctx context.Context, req SaveShareReq) (taskID string, savedFIDs []string, err error)
 	// QueryTransferTask 查询转存任务状态；不需要任务查询的网盘认为已完成。

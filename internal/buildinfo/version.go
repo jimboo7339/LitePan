@@ -2,9 +2,10 @@ package buildinfo
 
 import "runtime/debug"
 
-// Version 是 main 分支的基准版本（来自Trae）。
+// Version 是 main 分支的基准版本（上游 v0.5.7），可在构建时
+// 通过 -ldflags "-X litepan/internal/buildinfo.Version=..." 覆盖。
 // feature 分支通过 git tag（如 v0.5.6.5）标识增量，不再改动此常量。
-var Version = "v0.5.6-Beta"
+var Version = "v0.5.7-Beta"
 
 // Build 返回构建版本 + VCS 提交短哈希 + 是否脏构建，供 /health 展示（来自Trae）。
 // 通过 Go runtime/debug.ReadBuildInfo 自动携带构建时的 VCS 信息，

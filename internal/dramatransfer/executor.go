@@ -178,7 +178,7 @@ func (e *DramaExecutor) Execute(ctx context.Context) (string, error) {
 
 	// 6. 规划转存（仅根目录文件）（来自Trae）
 	e.section("生成转存计划")
-	var rootFiles []driver.ShareItem
+	var rootFiles []driver.ShareEntry
 	for _, it := range shareItems {
 		if !it.IsDir {
 			rootFiles = append(rootFiles, it)
@@ -279,13 +279,13 @@ type startFIDFilter struct {
 	fidKeep map[string]struct{}
 }
 
-func newStartFIDFilter(shareItems []driver.ShareItem, startFID string) startFIDFilter {
+func newStartFIDFilter(shareItems []driver.ShareEntry, startFID string) startFIDFilter {
 	startFID = strings.TrimSpace(startFID)
 	if startFID == "" {
 		return startFIDFilter{}
 	}
 	f := startFIDFilter{enabled: true, fidKeep: map[string]struct{}{}}
-	var startItem *driver.ShareItem
+	var startItem *driver.ShareEntry
 	for i := range shareItems {
 		if strings.TrimSpace(shareItems[i].FID) == startFID {
 			startItem = &shareItems[i]
@@ -300,7 +300,7 @@ func newStartFIDFilter(shareItems []driver.ShareItem, startFID string) startFIDF
 		return f
 	}
 	// 无时间戳：按时间降序保留 startfid 之前的 fid（来自Trae）
-	sorted := make([]driver.ShareItem, len(shareItems))
+	sorted := make([]driver.ShareEntry, len(shareItems))
 	copy(sorted, shareItems)
 	sort.Slice(sorted, func(i, j int) bool {
 		return sorted[i].UpdatedAt > sorted[j].UpdatedAt
@@ -328,7 +328,7 @@ func (f startFIDFilter) shouldKeep(fid string, updatedAt int64) bool {
 }
 
 // planTransfer 规划转存计划：过滤、重命名、去重、序号分配（来自Trae）
-func (e *DramaExecutor) planTransfer(shareFiles []driver.ShareItem, destFileNames []string) []dramaPlanItem {
+func (e *DramaExecutor) planTransfer(shareFiles []driver.ShareEntry, destFileNames []string) []dramaPlanItem {
 	pattern := e.task.Pattern
 	replace := e.task.Replace
 	ignoreExt := e.task.IgnoreExtension
@@ -351,7 +351,7 @@ func (e *DramaExecutor) planTransfer(shareFiles []driver.ShareItem, destFileName
 
 	// 构建候选列表（来自Trae）
 	type candidate struct {
-		item       driver.ShareItem
+		item       driver.ShareEntry
 		targetName string
 	}
 	var candidates []candidate
@@ -575,7 +575,7 @@ func (e *DramaExecutor) renameFiles(ctx context.Context, savedFIDs []string, pla
 }
 
 // syncSubdirs 同步子目录：匹配 update_subdir 正则的分享子目录会被转存/同步（来自Trae）
-func (e *DramaExecutor) syncSubdirs(ctx context.Context, pwdID, stoken string, shareItems []driver.ShareItem, destFID string, destDirMap map[string]string, tree *treeBuilder) {
+func (e *DramaExecutor) syncSubdirs(ctx context.Context, pwdID, stoken string, shareItems []driver.ShareEntry, destFID string, destDirMap map[string]string, tree *treeBuilder) {
 	compiledSubdir := e.mr.compile(e.task.UpdateSubdir)
 	if compiledSubdir == nil {
 		e.line("WARN: update_subdir 正则编译失败，跳过子目录同步")
@@ -587,7 +587,7 @@ func (e *DramaExecutor) syncSubdirs(ctx context.Context, pwdID, stoken string, s
 	deleter, _ := e.drv.(driver.Deleter)
 
 	// 按 name 排序的子目录列表（来自Trae）
-	var dirs []driver.ShareItem
+	var dirs []driver.ShareEntry
 	for _, it := range shareItems {
 		if it.IsDir {
 			dirs = append(dirs, it)
@@ -679,7 +679,7 @@ func (e *DramaExecutor) syncShareDir(ctx context.Context, pwdID, stoken, shareDi
 	}
 
 	// 按 name 排序（来自Trae）
-	sortedItems := make([]driver.ShareItem, len(shareItems))
+	sortedItems := make([]driver.ShareEntry, len(shareItems))
 	copy(sortedItems, shareItems)
 	sort.Slice(sortedItems, func(i, j int) bool {
 		return sortedItems[i].FileName < sortedItems[j].FileName

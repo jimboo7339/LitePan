@@ -188,7 +188,7 @@ func previewShareWithDriver(ctx context.Context, drv driver.Driver, in PreviewSh
 
 	// 8. 逐条计算重命名与状态（来自Trae）
 	type candidate struct {
-		item       driver.ShareItem
+		item       driver.ShareEntry
 		targetName string
 	}
 	var candidates []candidate

@@ -61,11 +61,11 @@ type shareFileEntry struct {
 	IsDir    bool   `json:"isDir"`    // 光鸭分享 API 可能返回的布尔字段别名
 }
 
-// toShareItem 转换为 LitePan 统一的 ShareItem（来自Trae）
+// toShareItem 转换为 LitePan 统一的 ShareEntry（来自Trae）
 // IsDir 判断逻辑对齐 CASX _pick_is_dir：先查布尔字段 → 再查 fileType → 最后查 resType。
 // 不使用 dirType，因为 CASX 也不用它，且 dirType=1 在分享 API 中可能表示其他含义导致误判。
-func (e shareFileEntry) toShareItem() driver.ShareItem {
-	return driver.ShareItem{
+func (e shareFileEntry) toShareItem() driver.ShareEntry {
+	return driver.ShareEntry{
 		FID:       e.FileID,
 		FileName:  e.FileName,
 		Size:      e.FileSize,
@@ -313,7 +313,7 @@ func (d *Driver) GetShareToken(ctx context.Context, pwdID, passcode string) (str
 }
 
 // ListShareItems 拉取光鸭分享目录下的一级条目（来自Trae）
-func (d *Driver) ListShareItems(ctx context.Context, pwdID, stoken, pdirFID string) ([]driver.ShareItem, error) {
+func (d *Driver) ListShareItems(ctx context.Context, pwdID, stoken, pdirFID string) ([]driver.ShareEntry, error) {
 	if strings.TrimSpace(pwdID) == "" {
 		return nil, domain.Errorf(domain.CodeValidation, "pwd_id 不能为空")
 	}
@@ -329,7 +329,7 @@ func (d *Driver) ListShareItems(ctx context.Context, pwdID, stoken, pdirFID stri
 		parentID = ""
 	}
 
-	var merged []driver.ShareItem
+	var merged []driver.ShareEntry
 	seen := make(map[string]struct{})
 	for page := 1; ; page++ {
 		var data shareListData
