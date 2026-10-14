@@ -56,6 +56,17 @@ export async function deleteAllNotifications() {
   return http.del<{ deleted: number }>("/admin/notifications");
 }
 
+export type NotifyWebhookChannel = "wecom" | "dingtalk" | "feishu";
+
+// testNotifyWebhook 向指定渠道发送测试消息（来自Trae）。
+// webhook 传设置页当前表单值，保存前也可以先验证地址有效性。
+export async function testNotifyWebhook(channel: NotifyWebhookChannel, webhook: string) {
+  return http.post<{ sent: boolean; channel: string }>("/admin/notifications/test-webhook", {
+    channel,
+    webhook,
+  });
+}
+
 export function isCacheScopeWarnNotification(item: NotificationItem): boolean {
   if (item.category === NOTIFICATION_CATEGORY_CACHE_SCOPE_WARN && (item.ref_id ?? 0) > 0) {
     return true;

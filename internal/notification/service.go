@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -375,29 +376,132 @@ func hasResultEmoji(s string) bool {
 }
 
 // postWebhook 统一的 HTTP POST 推送，带 10 秒超时，来自Trae
+// 推送结果只记日志：后台转发不能因为 webhook 故障影响通知主流程
 func (s *Service) postWebhook(channel, webhook string, payload any) {
+	if err := s.doWebhook(context.Background(), channel, webhook, payload); err != nil {
+		s.log.Warn("notify webhook send failed", "channel", channel, "err", err)
+	}
+}
+
+// doWebhook 同步推送并返回详细错误：HTTP 状态、渠道业务返回码（errcode/code）都会检查，
+// 供设置页"发送测试消息"向用户展示失败原因。
+func (s *Service) doWebhook(ctx context.Context, channel, webhook string, payload any) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
-		s.log.Warn("notify webhook marshal failed", "channel", channel, "err", err)
-		return
+		return fmt.Errorf("构造请求失败: %w", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhook, bytes.NewReader(body))
 	if err != nil {
-		s.log.Warn("notify webhook request build failed", "channel", channel, "err", err)
-		return
+		return fmt.Errorf("构造请求失败: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json; charset=utf-8")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		s.log.Warn("notify webhook send failed", "channel", channel, "err", err)
-		return
+		return fmt.Errorf("请求失败（超时或网络不可达）: %w", err)
 	}
 	defer resp.Body.Close()
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
 	if resp.StatusCode >= 300 {
-		s.log.Warn("notify webhook non-2xx", "channel", channel, "status", resp.StatusCode)
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, truncateBody(data))
 	}
+	if err := checkChannelResp(channel, data); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkChannelResp 校验渠道业务返回码。
+// 企微/钉钉失败时也返回 HTTP 200，只看状态码会误判成功，因此必须解析响应体：
+//   - 企微/钉钉: {"errcode":0,"errmsg":"ok"}
+//   - 飞书: {"code":0,"msg":"success"}（新版本为 {"StatusCode":0,"StatusMessage":"success"}）
+func checkChannelResp(channel string, data []byte) error {
+	if len(bytes.TrimSpace(data)) == 0 {
+		return nil
+	}
+	var resp struct {
+		Errcode       int    `json:"errcode"`
+		Errmsg        string `json:"errmsg"`
+		Code          int    `json:"code"`
+		Msg           string `json:"msg"`
+		StatusCode    int    `json:"StatusCode"`
+		StatusMessage string `json:"StatusMessage"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		// 响应不是 JSON（反代/错误页），无法确认成功，按失败处理并附上响应片段
+		return fmt.Errorf("响应不是有效 JSON: %s", truncateBody(data))
+	}
+	switch channel {
+	case "feishu":
+		if resp.Code != 0 {
+			return fmt.Errorf("飞书返回错误 code=%d: %s", resp.Code, resp.Msg)
+		}
+		if resp.StatusCode != 0 {
+			return fmt.Errorf("飞书返回错误 code=%d: %s", resp.StatusCode, resp.StatusMessage)
+		}
+	default:
+		if resp.Errcode != 0 {
+			return fmt.Errorf("errcode=%d: %s", resp.Errcode, resp.Errmsg)
+		}
+	}
+	return nil
+}
+
+// truncateBody 截断响应体用于错误信息展示，避免超长 HTML 把 toast 撑爆
+func truncateBody(data []byte) string {
+	const max = 200
+	text := strings.TrimSpace(string(data))
+	text = strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\r' || r == '\t' {
+			return ' '
+		}
+		return r
+	}, text)
+	if len(text) > max {
+		return text[:max] + "…"
+	}
+	return text
+}
+
+// SendTest 向指定渠道发送一条测试消息，同步等待结果并把失败原因返回给调用方，
+// 供设置页"发送测试消息"按钮使用。不写通知存储，不影响未读数。
+// webhook 取当前表单值而非已保存设置，便于用户在保存前验证地址有效性。
+func (s *Service) SendTest(ctx context.Context, channel, webhook string) error {
+	if s == nil {
+		return domain.Errorf(domain.CodeInternal, "通知服务未就绪")
+	}
+	title := "通知渠道测试"
+	channelName := map[string]string{"wecom": "企业微信", "dingtalk": "钉钉", "feishu": "飞书"}[channel]
+	if channelName == "" {
+		return domain.Errorf(domain.CodeValidation, "不支持的通知渠道: %s", channel)
+	}
+	webhook = strings.TrimSpace(webhook)
+	if webhook == "" {
+		return domain.Errorf(domain.CodeValidation, "Webhook 地址为空，请先填写")
+	}
+	if !strings.HasPrefix(webhook, "http://") && !strings.HasPrefix(webhook, "https://") {
+		return domain.Errorf(domain.CodeValidation, "Webhook 地址必须以 http:// 或 https:// 开头")
+	}
+	message := fmt.Sprintf("收到本消息即表示 LitePan %s 机器人推送正常。（%s）",
+		channelName, time.Now().Format("2006-01-02 15:04:05"))
+	var payload any
+	switch channel {
+	case "wecom":
+		payload = map[string]any{"msgtype": "text", "text": map[string]string{"content": formatText("info", title, message)}}
+	case "dingtalk":
+		payload = map[string]any{"msgtype": "text", "text": map[string]string{"content": formatText("info", title, message)}}
+	case "feishu":
+		payload = map[string]any{"msg_type": "text", "content": map[string]string{"text": formatText("info", title, message)}}
+	}
+	if err := s.doWebhook(ctx, channel, webhook, payload); err != nil {
+		// 用 DRIVER_ERROR（上游服务异常）承载详情，前端 toast 能看到具体失败原因
+		return domain.Errorf(domain.CodeDriverError, "%v", err)
+	}
+	return nil
 }
 
 func (s *Service) accountName(ctx context.Context, accountID int64) string {

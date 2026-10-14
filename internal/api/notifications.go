@@ -147,6 +147,27 @@ func (h *Handler) deleteAllNotifications(w http.ResponseWriter, r *http.Request)
 	writeOK(w, map[string]any{"deleted": n})
 }
 
+// testNotificationWebhook 向指定渠道发送测试消息，同步返回发送结果（来自Trae）。
+// webhook 取设置页当前表单值，便于用户在保存前验证地址有效性。
+func (h *Handler) testNotificationWebhook(w http.ResponseWriter, r *http.Request) {
+	if !ensureServiceReady(w, h.notifications != nil) {
+		return
+	}
+	var req struct {
+		Channel string `json:"channel"`
+		Webhook string `json:"webhook"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeErr(w, err)
+		return
+	}
+	if err := h.notifications.SendTest(r.Context(), req.Channel, req.Webhook); err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeOK(w, map[string]any{"sent": true, "channel": req.Channel})
+}
+
 type notificationDTO struct {
 	ID        int64  `json:"id"`
 	Level     string `json:"level"`

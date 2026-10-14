@@ -11,6 +11,7 @@ import {
   type SettingItem,
 } from "@/api/settings";
 import { toast } from "@/composables/useToast";
+import { testNotifyWebhook, type NotifyWebhookChannel } from "@/api/notifications";
 import { useSettingsLoad } from "@/composables/useSettingsLoad";
 import { useAdminPageLoading } from "@/composables/useAdminLoadingBar";
 import { useSectionTabRoute } from "@/composables/useSectionTabRoute";
@@ -420,6 +421,40 @@ async function saveServices() {
   }, { successMessage: "其他设置已保存" });
 }
 
+// 通知渠道测试（来自Trae）：设置项 key → 后端渠道名
+const NOTIFY_WEBHOOK_CHANNELS: Record<string, NotifyWebhookChannel> = {
+  notify_wecom_webhook: "wecom",
+  notify_dingtalk_webhook: "dingtalk",
+  notify_feishu_webhook: "feishu",
+};
+
+const webhookTestingKey = ref("");
+
+function isNotifyWebhookKey(key: string): boolean {
+  return key in NOTIFY_WEBHOOK_CHANNELS;
+}
+
+// sendWebhookTest 用当前表单值（含未保存的修改）向渠道发一条测试消息，
+// 同步等待后端结果：成功提示去群里确认，失败展示具体原因（HTTP 状态/业务码）。
+async function sendWebhookTest(key: string) {
+  const channel = NOTIFY_WEBHOOK_CHANNELS[key];
+  if (!channel || webhookTestingKey.value) return;
+  const webhook = String(form[key] ?? "").trim();
+  if (!webhook) {
+    toast.error("请先填写 Webhook 地址");
+    return;
+  }
+  webhookTestingKey.value = key;
+  try {
+    await testNotifyWebhook(channel, webhook);
+    toast.success("测试消息已发送，请到对应群里确认收到");
+  } catch (err) {
+    toast.error(`测试消息发送失败：${err instanceof Error ? err.message : String(err)}`);
+  } finally {
+    webhookTestingKey.value = "";
+  }
+}
+
 async function submit() {
   if (isSecurityTab.value) {
     await saveSecurity();
@@ -803,8 +838,17 @@ async function submit() {
                   <AppInput v-model="form[it.key]" type="number" :placeholder="it.default" />
                 </div>
 
-                <div v-else class="field-text">
+                <div v-else class="field-text" :class="{ 'field-text--with-action': isNotifyWebhookKey(it.key) }">
                   <AppInput v-model="form[it.key]" :placeholder="it.default" autocomplete="off" />
+                  <AppButton
+                    v-if="isNotifyWebhookKey(it.key)"
+                    type="button"
+                    variant="secondary"
+                    :disabled="webhookTestingKey === it.key"
+                    @click="sendWebhookTest(it.key)"
+                  >
+                    {{ webhookTestingKey === it.key ? "发送中…" : "发送测试" }}
+                  </AppButton>
                 </div>
               </div>
             </template>
@@ -889,6 +933,23 @@ async function submit() {
 .field-num,
 .field-select {
   width: 100%;
+}
+
+/* 通知渠道 webhook 行：输入框 + 发送测试按钮并排（来自Trae） */
+.field-text--with-action {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.field-text--with-action input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.field-text--with-action .btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 @media (max-width: 640px) {

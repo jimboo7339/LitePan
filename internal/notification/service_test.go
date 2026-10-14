@@ -2,6 +2,10 @@ package notification
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -237,4 +241,130 @@ func TestSubscribeUnsubscribeUnderPublish(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("并发订阅/退订下发布阻塞")
 	}
+}
+
+// SendTest 参数校验：未知渠道、空地址、非 http(s) 地址都必须直接拒绝，不发请求。
+func TestSendTestValidation(t *testing.T) {
+	svc := NewService(Options{Repo: newFakeRepo()})
+	cases := []struct {
+		name    string
+		channel string
+		webhook string
+		want    string
+	}{
+		{"未知渠道", "telegram", "https://example.com/hook", "不支持的通知渠道"},
+		{"空地址", "wecom", "   ", "Webhook 地址为空"},
+		{"非 http 地址", "dingtalk", "ftp://example.com/hook", "必须以 http:// 或 https:// 开头"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := svc.SendTest(context.Background(), tc.channel, tc.webhook)
+			if err == nil {
+				t.Fatalf("期望报错 %q，实际成功", tc.want)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("错误信息 %q 不包含 %q", err.Error(), tc.want)
+			}
+		})
+	}
+}
+
+// SendTest 成功路径：HTTP 200 且渠道业务码为 0 才算成功，并校验测试消息内容。
+func TestSendTestSuccess(t *testing.T) {
+	cases := []struct {
+		channel string
+		resp    string
+	}{
+		{"wecom", `{"errcode":0,"errmsg":"ok"}`},
+		{"dingtalk", `{"errcode":0,"errmsg":"ok"}`},
+		{"feishu", `{"code":0,"msg":"success"}`},
+		{"feishu", `{"StatusCode":0,"StatusMessage":"success"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.channel+"/"+tc.resp, func(t *testing.T) {
+			var gotBody map[string]any
+			var gotCT string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotCT = r.Header.Get("Content-Type")
+				_ = json.NewDecoder(r.Body).Decode(&gotBody)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(tc.resp))
+			}))
+			defer srv.Close()
+
+			if err := NewService(Options{Repo: newFakeRepo()}).SendTest(context.Background(), tc.channel, srv.URL); err != nil {
+				t.Fatalf("期望成功，实际报错: %v", err)
+			}
+			if !strings.Contains(gotCT, "application/json") {
+				t.Fatalf("Content-Type=%q，期望 application/json", gotCT)
+			}
+			text := flattenText(gotBody)
+			if !strings.Contains(text, "通知渠道测试") || !strings.Contains(text, "推送正常") {
+				t.Fatalf("测试消息内容不符合预期: %s", text)
+			}
+		})
+	}
+}
+
+// SendTest 业务失败路径：渠道返回 HTTP 200 但业务码非 0，必须把业务错误透出。
+func TestSendTestBusinessFailure(t *testing.T) {
+	cases := []struct {
+		channel string
+		resp    string
+		want    string
+	}{
+		{"wecom", `{"errcode":93000,"errmsg":"invalid webhook url"}`, "errcode=93000"},
+		{"feishu", `{"code":99991663,"msg":"token expired"}`, "code=99991663"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.channel, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(tc.resp))
+			}))
+			defer srv.Close()
+
+			err := NewService(Options{Repo: newFakeRepo()}).SendTest(context.Background(), tc.channel, srv.URL)
+			if err == nil {
+				t.Fatalf("期望报错 %q，实际成功", tc.want)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("错误信息 %q 不包含 %q", err.Error(), tc.want)
+			}
+		})
+	}
+}
+
+// SendTest HTTP 失败路径：非 2xx 与不可达地址都要报错且带原因。
+func TestSendTestHTTPFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte("boom"))
+	}))
+	defer srv.Close()
+
+	err := NewService(Options{Repo: newFakeRepo()}).SendTest(context.Background(), "wecom", srv.URL)
+	if err == nil || !strings.Contains(err.Error(), "HTTP 500") {
+		t.Fatalf("期望包含 HTTP 500 的错误，实际: %v", err)
+	}
+
+	// 端口未监听的地址：请求阶段直接失败
+	if err := NewService(Options{Repo: newFakeRepo()}).SendTest(context.Background(), "wecom", "http://127.0.0.1:1/hook"); err == nil {
+		t.Fatal("期望不可达地址报错，实际成功")
+	}
+}
+
+// flattenText 从渠道 payload 里取出文本正文（企微/钉钉 text.content、飞书 content.text）
+func flattenText(payload map[string]any) string {
+	if text, ok := payload["text"].(map[string]any); ok {
+		if c, ok := text["content"].(string); ok {
+			return c
+		}
+	}
+	if content, ok := payload["content"].(map[string]any); ok {
+		if c, ok := content["text"].(string); ok {
+			return c
+		}
+	}
+	b, _ := json.Marshal(payload)
+	return string(b)
 }
